@@ -383,6 +383,12 @@ export const shorts = pgTable(
     scheduledAt: timestamp({ withTimezone: true }),
     publishedAt: timestamp({ withTimezone: true }),
     youtubeUrl: text(),
+    // Set when this app uploaded the video (null when it was uploaded by hand in YouTube Studio).
+    youtubeVideoId: text(),
+    // Guards against two uploads of the same Short running at once.
+    uploadStartedAt: timestamp({ withTimezone: true }),
+    publishError: text(),
+    publishFailedAt: timestamp({ withTimezone: true }),
     notes: text().notNull().default(""),
     createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp({ withTimezone: true })
@@ -440,3 +446,26 @@ export const shortMetrics = pgTable(
 
 export type Short = typeof shorts.$inferSelect;
 export type ShortMetric = typeof shortMetrics.$inferSelect;
+
+// ---------- YouTube ----------
+
+// The connected channel (at most one row). Tokens are AES-256-GCM encrypted with YOUTUBE_TOKEN_KEY
+// and never leave the server.
+export const youtubeConnections = pgTable("youtube_connections", {
+  id: uuid().primaryKey().defaultRandom(),
+  channelId: text().notNull().unique(),
+  channelTitle: text().notNull(),
+  channelHandle: text(),
+  thumbnailUrl: text(),
+  scopes: text().array().notNull().default([]),
+  refreshToken: text().notNull(),
+  accessToken: text(),
+  accessTokenExpiresAt: timestamp({ withTimezone: true }),
+  connectedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp({ withTimezone: true })
+    .notNull()
+    .defaultNow()
+    .$onUpdate(() => new Date()),
+});
+
+export type YouTubeConnection = typeof youtubeConnections.$inferSelect;

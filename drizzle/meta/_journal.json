@@ -43,6 +43,13 @@
       "when": 1793355254371,
       "tag": "0005_shorts_studio",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1793358313247,
+      "tag": "0006_youtube_publishing",
+      "breakpoints": true
     }
   ]
 }

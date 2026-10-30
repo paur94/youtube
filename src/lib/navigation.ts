@@ -79,7 +79,7 @@ export const MODULES = {
     href: "/publishing",
     label: "Publishing",
     icon: SendIcon,
-    description: "Queue, schedule and track approved Shorts. Uploading stays manual",
+    description: "Schedule and publish approved Shorts to YouTube, only when you confirm each one",
     ready: true,
   },
   analytics: {

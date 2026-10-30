@@ -19,7 +19,7 @@ import { MODULES } from "@/lib/navigation";
 import { mediaUrl } from "@/lib/production";
 import { approvalBlockers, evaluateQuality, summarizeQuality } from "@/lib/short-qc";
 import { aspectLabel } from "@/lib/short-video";
-import { formatCaptionLines } from "@/lib/shorts";
+import { formatCaptionLines, isShortLocked } from "@/lib/shorts";
 import { getClaudeConfig } from "@/server/ai/claude";
 import { getFfmpegVersion } from "@/server/media/ffmpeg";
 import { buildQualityInput, getShort, isRenderCurrent } from "@/server/queries/shorts";
@@ -58,7 +58,7 @@ async function ShortData({ params }: Pick<PageProps<"/shorts/[id]">, "params">) 
   if (!short) notFound();
 
   const claude = getClaudeConfig();
-  const locked = short.status === "published";
+  const locked = isShortLocked(short);
   const checks = evaluateQuality(
     buildQualityInput(short, { ffmpegAvailable: Boolean(ffmpeg), hasDialogue: (short.scene?.dialogue.length ?? 0) > 0 }),
   );
@@ -94,6 +94,9 @@ async function ShortData({ params }: Pick<PageProps<"/shorts/[id]">, "params">) 
           </p>
           <UseCurrentClipButton shortId={short.id} />
         </div>
+      )}
+      {short.status === "failed" && short.publishError && (
+        <div className="rounded-lg border border-orange-500/40 bg-orange-500/10 p-3 text-sm">Upload failed: {short.publishError}</div>
       )}
       {short.status === "rejected" && (
         <div className="rounded-lg border border-rose-500/40 bg-rose-500/10 p-3 text-sm">
@@ -157,7 +160,7 @@ async function ShortData({ params }: Pick<PageProps<"/shorts/[id]">, "params">) 
               <CardDescription>Approval needs a current render, approved metadata and no failed checks.</CardDescription>
             </CardHeader>
             <CardContent>
-              <ReviewActions shortId={short.id} status={short.status} blockers={blockers} title={short.title} />
+              <ReviewActions shortId={short.id} status={short.status} uploaded={short.youtubeVideoId !== null} blockers={blockers} title={short.title} />
             </CardContent>
           </Card>
         </div>

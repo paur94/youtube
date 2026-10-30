@@ -1,16 +1,33 @@
 "use client";
 
-import { CalendarClockIcon, CalendarXIcon, CircleCheckBigIcon, DownloadIcon, FileJsonIcon, Undo2Icon } from "lucide-react";
+import {
+  CalendarClockIcon,
+  CalendarXIcon,
+  CircleCheckBigIcon,
+  DownloadIcon,
+  FileJsonIcon,
+  RefreshCwIcon,
+  Undo2Icon,
+  UploadIcon,
+} from "lucide-react";
 import { useId, useState } from "react";
 
 import { CopyButton } from "@/components/production/copy-button";
+import { dateTimeFormat } from "@/components/production/format";
 import { useAction } from "@/components/production/use-action";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import type { ShortStatus } from "@/lib/shorts";
-import { markPublished, scheduleShort, unmarkPublished, unscheduleShort } from "@/server/actions/shorts";
+import { isPublishable, type ShortStatus } from "@/lib/shorts";
+import {
+  markPublished,
+  publishShortToYouTube,
+  refreshYouTubeStatus,
+  scheduleShort,
+  unmarkPublished,
+  unscheduleShort,
+} from "@/server/actions/shorts";
 
 /** `datetime-local` value in the browser's time zone. */
 function toLocalInput(date: Date) {
@@ -20,24 +37,52 @@ function toLocalInput(date: Date) {
 
 export function QueueActions({
   shortId,
+  title,
   status,
   scheduledAt,
+  uploaded,
+  channelTitle,
 }: {
   shortId: string;
+  title: string;
   status: ShortStatus;
   scheduledAt: string | null;
+  /** Uploaded to YouTube by this app. */
+  uploaded: boolean;
+  /** The connected channel, or null when none is connected. */
+  channelTitle: string | null;
 }) {
   const [pending, run] = useAction();
   const [scheduleOpen, setScheduleOpen] = useState(false);
   const [publishOpen, setPublishOpen] = useState(false);
+  const [uploadOpen, setUploadOpen] = useState(false);
+  const [mode, setMode] = useState<"now" | "schedule">("now");
+  const [canSchedule, setCanSchedule] = useState(false);
+  const [approved, setApproved] = useState(false);
   const [when, setWhen] = useState("");
   const [url, setUrl] = useState("");
   const id = useId();
+  const publishable = isPublishable(status) && !uploaded;
+
+  function openUpload() {
+    // YouTube needs some lead time for a scheduled publish; the server checks this again.
+    const future = scheduledAt !== null && new Date(scheduledAt).getTime() > Date.now() + 5 * 60_000;
+    setCanSchedule(future);
+    setMode(future ? "schedule" : "now");
+    setApproved(false);
+    setUploadOpen(true);
+  }
 
   return (
     <div className="flex flex-wrap justify-end gap-1.5">
-      {(status === "approved" || status === "scheduled") && (
+      {publishable && (
         <>
+          {channelTitle && (
+            <Button size="sm" disabled={pending} onClick={openUpload}>
+              <UploadIcon />
+              {status === "failed" ? "Retry upload" : "Upload to YouTube"}
+            </Button>
+          )}
           <Button
             size="sm"
             variant="outline"
@@ -49,9 +94,9 @@ export function QueueActions({
             }}
           >
             <CalendarClockIcon />
-            {status === "scheduled" ? "Reschedule" : "Schedule"}
+            {scheduledAt ? "Reschedule" : "Schedule"}
           </Button>
-          {status === "scheduled" && (
+          {scheduledAt && (
             <Button size="sm" variant="ghost" disabled={pending} onClick={() => run(() => unscheduleShort(shortId))}>
               <CalendarXIcon />
               Unschedule
@@ -63,19 +108,94 @@ export function QueueActions({
           </Button>
         </>
       )}
-      {status === "published" && (
-        <Button size="sm" variant="ghost" disabled={pending} onClick={() => run(() => unmarkPublished(shortId))}>
-          <Undo2Icon />
-          Not published
+      {uploaded && status !== "published" && (
+        <Button size="sm" variant="outline" disabled={pending} onClick={() => run(() => refreshYouTubeStatus(shortId))}>
+          <RefreshCwIcon />
+          Check YouTube
         </Button>
       )}
+      {(status === "published" || uploaded) && (
+        <Button size="sm" variant="ghost" disabled={pending} onClick={() => run(() => unmarkPublished(shortId))}>
+          <Undo2Icon />
+          {status === "published" ? "Not published" : "Forget upload"}
+        </Button>
+      )}
+
+      <Dialog open={uploadOpen} onOpenChange={setUploadOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Upload to YouTube</DialogTitle>
+            <DialogDescription>
+              Uploads “{title}” to {channelTitle} with its approved metadata. Nothing is sent to YouTube until you confirm here.
+            </DialogDescription>
+          </DialogHeader>
+          <fieldset className="grid gap-3">
+            <legend className="sr-only">When it goes public</legend>
+            <label className="flex items-start gap-2 text-sm">
+              <input
+                type="radio"
+                name={`${id}-mode`}
+                checked={mode === "now"}
+                onChange={() => setMode("now")}
+                className="mt-0.5 size-3.5 shrink-0 accent-primary"
+              />
+              <span>
+                <span className="font-medium">Publish now</span>
+                <span className="block text-muted-foreground">Public as soon as YouTube finishes processing.</span>
+              </span>
+            </label>
+            <label className={`flex items-start gap-2 text-sm ${canSchedule ? "" : "opacity-50"}`}>
+              <input
+                type="radio"
+                name={`${id}-mode`}
+                checked={mode === "schedule"}
+                disabled={!canSchedule}
+                onChange={() => setMode("schedule")}
+                className="mt-0.5 size-3.5 shrink-0 accent-primary"
+              />
+              <span>
+                <span className="font-medium">Upload now, publish at the scheduled time</span>
+                <span className="block text-muted-foreground">
+                  {canSchedule && scheduledAt
+                    ? `Private until ${dateTimeFormat.format(new Date(scheduledAt))}, then YouTube makes it public.`
+                    : "Use Schedule to set a time at least 5 minutes ahead first."}
+                </span>
+              </span>
+            </label>
+          </fieldset>
+          <label className="flex items-start gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={approved}
+              onChange={(e) => setApproved(e.target.checked)}
+              className="mt-0.5 size-3.5 shrink-0 accent-primary"
+            />
+            {mode === "now"
+              ? `I approve publishing this Short publicly on ${channelTitle} now.`
+              : `I approve uploading this Short to ${channelTitle} to go public at the scheduled time.`}
+          </label>
+          <DialogFooter>
+            <Button variant="outline" disabled={pending} onClick={() => setUploadOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              disabled={pending || !approved}
+              onClick={() => run(() => publishShortToYouTube(shortId, mode, approved), () => setUploadOpen(false))}
+            >
+              <UploadIcon />
+              {pending ? "Uploading…" : mode === "now" ? "Publish" : "Upload and schedule"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={scheduleOpen} onOpenChange={setScheduleOpen}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Schedule</DialogTitle>
             <DialogDescription>
-              Records when you plan to publish. Nothing is uploaded: set the same time in YouTube Studio when you upload the file.
+              Records when this Short should go live. Nothing is uploaded until you choose “Upload to YouTube” (or upload it in
+              YouTube Studio yourself).
             </DialogDescription>
           </DialogHeader>
           <div className="grid gap-1.5">
@@ -100,7 +220,9 @@ export function QueueActions({
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Mark as published</DialogTitle>
-            <DialogDescription>Only do this after the Short is live on YouTube. It locks the Short and enables analytics entry.</DialogDescription>
+            <DialogDescription>
+              For Shorts you uploaded in YouTube Studio. Only do this after it is live: it locks the Short and enables analytics entry.
+            </DialogDescription>
           </DialogHeader>
           <div className="grid gap-1.5">
             <Label htmlFor={`${id}-url`}>YouTube link (optional)</Label>
@@ -148,7 +270,7 @@ export function YouTubeMetadataButton({
         <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
           <DialogHeader>
             <DialogTitle>Upload package</DialogTitle>
-            <DialogDescription>Copy these into YouTube Studio. Nothing is sent to YouTube by this app.</DialogDescription>
+            <DialogDescription>For uploading in YouTube Studio by hand. Opening this sends nothing to YouTube.</DialogDescription>
           </DialogHeader>
           <div className="grid gap-4 text-sm">
             <CopyRow label="Title" text={title} />
@@ -180,7 +302,7 @@ export function YouTubeMetadataButton({
                 </Button>
               )}
             </div>
-            <CopyRow label="YouTube Data API body (videos.insert, for a future integration)" text={json} multiline mono />
+            <CopyRow label="YouTube Data API body (videos.insert)" text={json} multiline mono />
           </div>
         </DialogContent>
       </Dialog>

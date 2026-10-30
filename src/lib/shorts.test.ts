@@ -9,6 +9,8 @@ import {
   findMetadataConcerns,
   formatCaptionLines,
   isOverdue,
+  isPublishable,
+  isShortLocked,
   metricState,
   normalizeHashtags,
   parseCaptionLines,
@@ -155,6 +157,38 @@ describe("metadata", () => {
     expect(yt.status).not.toHaveProperty("publishAt");
     expect(yt.snippet).not.toHaveProperty("defaultLanguage");
     expect(yt.snippet.tags.join(",").length).toBeLessThanOrEqual(500);
+  });
+});
+
+describe("publishing workflow", () => {
+  it("publishes or schedules only Shorts that passed an explicit approval", () => {
+    expect(["draft", "ready_for_review", "rejected", "published"].filter((s) => isPublishable(s as never))).toEqual([]);
+    expect(isPublishable("approved")).toBe(true);
+    expect(isPublishable("scheduled")).toBe(true);
+    expect(isPublishable("failed")).toBe(true);
+  });
+
+  it("locks published Shorts and Shorts already uploaded to YouTube", () => {
+    expect(isShortLocked({ status: "published", youtubeVideoId: null })).toBe(true);
+    expect(isShortLocked({ status: "scheduled", youtubeVideoId: "abc" })).toBe(true);
+    expect(isShortLocked({ status: "scheduled", youtubeVideoId: null })).toBe(false);
+  });
+
+  it("builds a public upload that ignores the schedule when publishing now", () => {
+    const yt = buildYouTubeMetadata({
+      title: "t",
+      description: "",
+      hashtags: [],
+      playlist: "",
+      language: null,
+      madeForKids: true,
+      containsSyntheticMedia: true,
+      scheduledAt: new Date(Date.now() + 3600_000),
+      hasCaptions: false,
+      visibility: "public",
+    });
+    expect(yt.status.privacyStatus).toBe("public");
+    expect(yt.status).not.toHaveProperty("publishAt");
   });
 });
 

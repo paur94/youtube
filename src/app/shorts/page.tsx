@@ -13,6 +13,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { MODULES } from "@/lib/navigation";
 import { mediaUrl } from "@/lib/production";
 import { evaluateQuality, summarizeQuality } from "@/lib/short-qc";
+import { isShortLocked } from "@/lib/shorts";
 import { getClaudeConfig } from "@/server/ai/claude";
 import { getFfmpegVersion } from "@/server/media/ffmpeg";
 import { buildQualityInput, getImportCandidates, listShorts } from "@/server/queries/shorts";
@@ -50,7 +51,7 @@ async function ShortsData() {
     if (!groups.has(key)) groups.set(key, { planId: row.short.planId, title: row.planTitle ?? "Production plan deleted", rows: [] });
     groups.get(key)!.rows.push(row);
   }
-  const editable = rows.filter((r) => r.short.status !== "published").map((r) => r.short.id);
+  const editable = rows.filter((r) => !isShortLocked(r.short)).map((r) => r.short.id);
 
   return (
     <>

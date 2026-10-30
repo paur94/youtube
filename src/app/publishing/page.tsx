@@ -15,7 +15,9 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { MODULES } from "@/lib/navigation";
 import { mediaUrl } from "@/lib/production";
 import { buildYouTubeMetadata, isOverdue, SHORT_STATUS_LABELS, SHORT_STATUSES } from "@/lib/shorts";
+import { getYouTubeConfig } from "@/server/providers/youtube";
 import { getPublishingQueue, getShortStatusCounts, isRenderCurrent } from "@/server/queries/shorts";
+import { getYouTubeConnection } from "@/server/youtube/connection";
 
 export const metadata: Metadata = { title: MODULES.publishing.label };
 
@@ -32,11 +34,16 @@ export default function PublishingPage() {
 
 async function QueueData() {
   await connection();
-  const [queue, counts] = await Promise.all([getPublishingQueue(), getShortStatusCounts()]);
+  const youtube = getYouTubeConfig();
+  const [queue, counts, channel] = await Promise.all([
+    getPublishingQueue(),
+    getShortStatusCounts(),
+    youtube.configured ? getYouTubeConnection() : null,
+  ]);
 
   return (
     <>
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-7">
         {SHORT_STATUSES.map((s) => (
           <Card key={s} className="gap-1 py-3">
             <CardContent className="px-4">
@@ -50,15 +57,28 @@ async function QueueData() {
       <div className="flex items-start gap-2 rounded-lg border bg-card p-3 text-sm text-muted-foreground">
         <InfoIcon className="mt-0.5 size-4 shrink-0 text-primary" />
         <p>
-          Nothing is published automatically. This queue tracks status and prepares YouTube-ready metadata; upload each
-          vertical file in YouTube Studio yourself, then mark it published here.
+          Nothing is published automatically. A Short reaches YouTube only when you choose “Upload to YouTube” and confirm it,
+          and only after it was approved in the Shorts Studio.{" "}
+          {channel ? (
+            <>
+              Uploads go to <span className="font-medium text-foreground">{channel.channelTitle}</span>.
+            </>
+          ) : (
+            <>
+              No channel is connected:{" "}
+              <Link href="/settings" className="text-primary hover:underline">
+                connect one in Settings
+              </Link>
+              , or upload in YouTube Studio and mark it published here.
+            </>
+          )}
         </p>
       </div>
 
       <Card>
         <CardHeader>
           <CardTitle>Publishing queue</CardTitle>
-          <CardDescription>Approved, scheduled and published Shorts. Approve drafts in the Shorts Studio.</CardDescription>
+          <CardDescription>Approved, scheduled, failed and published Shorts. Review and approve drafts in the Shorts Studio.</CardDescription>
         </CardHeader>
         <CardContent>
           {queue.length === 0 ? (
@@ -108,6 +128,9 @@ async function QueueData() {
                           {planTitle ?? "Plan deleted"} · scene {short.sceneNumber}
                           {short.playlist && ` · ${short.playlist}`}
                         </p>
+                        {short.status === "failed" && short.publishError && (
+                          <p className="text-xs whitespace-normal text-orange-400">{short.publishError}</p>
+                        )}
                         {stale && short.status !== "published" && (
                           <p className="flex items-center gap-1 text-xs text-amber-400">
                             <TriangleAlertIcon className="size-3" />
@@ -131,7 +154,12 @@ async function QueueData() {
                         ) : short.scheduledAt ? (
                           <span className={overdue ? "text-amber-400" : undefined}>
                             {dateTimeFormat.format(short.scheduledAt)}
-                            {overdue && <span className="block text-xs">Time passed: published yet?</span>}
+                            <span className="block text-xs text-muted-foreground">
+                              {short.youtubeVideoId ? "Uploaded · YouTube publishes it" : "Not uploaded yet"}
+                            </span>
+                            {overdue && (
+                              <span className="block text-xs">{short.youtubeVideoId ? "Time passed: check YouTube" : "Time passed: published yet?"}</span>
+                            )}
                           </span>
                         ) : (
                           <span className="text-muted-foreground">Not scheduled</span>
@@ -157,7 +185,14 @@ async function QueueData() {
                             videoUrl={short.renderFilePath ? mediaUrl(short.renderFilePath) : null}
                             captionsUrl={short.captions.length ? `/api/shorts/${short.id}/captions` : null}
                           />
-                          <QueueActions shortId={short.id} status={short.status} scheduledAt={short.scheduledAt?.toISOString() ?? null} />
+                          <QueueActions
+                            shortId={short.id}
+                            title={short.title}
+                            status={short.status}
+                            scheduledAt={short.scheduledAt?.toISOString() ?? null}
+                            uploaded={short.youtubeVideoId !== null}
+                            channelTitle={channel?.channelTitle ?? null}
+                          />
                         </div>
                       </TableCell>
                     </TableRow>

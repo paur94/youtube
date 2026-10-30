@@ -3,6 +3,7 @@
 import {
   CheckCircle2Icon,
   RotateCcwIcon,
+  SendIcon,
   SparklesIcon,
   Trash2Icon,
   WandSparklesIcon,
@@ -37,6 +38,7 @@ import {
   rejectShort,
   reopenShort,
   setMetadataApproval,
+  submitShortForReview,
   updateShortMetadata,
 } from "@/server/actions/shorts";
 
@@ -177,7 +179,19 @@ export function ApplySuggestionsButton({ shortId, disabled }: { shortId: string;
   );
 }
 
-export function ReviewActions({ shortId, status, blockers, title }: { shortId: string; status: ShortStatus; blockers: string[]; title: string }) {
+export function ReviewActions({
+  shortId,
+  status,
+  uploaded,
+  blockers,
+  title,
+}: {
+  shortId: string;
+  status: ShortStatus;
+  uploaded: boolean;
+  blockers: string[];
+  title: string;
+}) {
   const [pending, run] = useAction();
   const [confirmed, setConfirmed] = useState(false);
   const [rejectOpen, setRejectOpen] = useState(false);
@@ -188,6 +202,27 @@ export function ReviewActions({ shortId, status, blockers, title }: { shortId: s
   return (
     <div className="grid gap-3">
       {status === "draft" && (
+        <>
+          {blockers.length > 0 && (
+            <ul className="grid gap-1 text-xs text-muted-foreground">
+              {blockers.map((b) => (
+                <li key={b}>· {b}</li>
+              ))}
+            </ul>
+          )}
+          <div className="flex flex-wrap gap-2">
+            <Button disabled={pending || blockers.length > 0} onClick={() => run(() => submitShortForReview(shortId))}>
+              <SendIcon />
+              Submit for review
+            </Button>
+            <Button variant="outline" disabled={pending} onClick={() => setRejectOpen(true)}>
+              <XCircleIcon />
+              Reject
+            </Button>
+          </div>
+        </>
+      )}
+      {status === "ready_for_review" && (
         <>
           {blockers.length > 0 ? (
             <ul className="grid gap-1 text-xs text-muted-foreground">
@@ -207,7 +242,7 @@ export function ReviewActions({ shortId, status, blockers, title }: { shortId: s
             </label>
           )}
           <div className="flex flex-wrap gap-2">
-            <Button disabled={pending || blockers.length > 0 || !confirmed} onClick={() => run(() => approveShort(shortId))}>
+            <Button disabled={pending || blockers.length > 0 || !confirmed} onClick={() => run(() => approveShort(shortId, confirmed))}>
               <CheckCircle2Icon />
               Approve Short
             </Button>
@@ -218,13 +253,17 @@ export function ReviewActions({ shortId, status, blockers, title }: { shortId: s
           </div>
         </>
       )}
-      {(status === "approved" || status === "scheduled" || status === "rejected") && (
+      {status !== "draft" && status !== "published" && !uploaded && (
         <Button variant="outline" className="w-fit" disabled={pending} onClick={() => run(() => reopenShort(shortId))}>
           <RotateCcwIcon />
           Back to draft
         </Button>
       )}
-      {status === "published" && <p className="text-sm text-muted-foreground">Published Shorts are locked. Undo it on the Publishing page.</p>}
+      {(status === "published" || uploaded) && (
+        <p className="text-sm text-muted-foreground">
+          {status === "published" ? "Published" : "Uploaded to YouTube"} Shorts are locked. Undo it on the Publishing page.
+        </p>
+      )}
       <Button variant="ghost" size="sm" className="w-fit text-muted-foreground" disabled={pending} onClick={() => setDeleteOpen(true)}>
         <Trash2Icon />
         Delete Short

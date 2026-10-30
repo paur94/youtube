@@ -1,8 +1,9 @@
 "use server";
 
 import { randomUUID } from "node:crypto";
+import { readFile } from "node:fs/promises";
 
-import { and, asc, eq, inArray } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull, lt, or } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
@@ -13,7 +14,10 @@ import { buildAssFile, computeFraming } from "@/lib/short-video";
 import {
   applyPublishOrder,
   buildCaptionsFromDialogue,
+  buildYouTubeMetadata,
   DEFAULT_VIDEO_SETTINGS,
+  isPublishable,
+  isShortLocked,
   normalizeHashtags,
   parseCaptionLines,
   parseMetricsForm,
@@ -35,13 +39,17 @@ import {
 } from "@/server/ai/claude";
 import { buildPublishOrderPrompt, buildShortAnalysisPrompt } from "@/server/ai/shorts-prompt";
 import { FfmpegError, getFfmpegVersion, measureLoudness, probeMedia, renderVertical } from "@/server/media/ffmpeg";
-import { buildQualityInput, getShort } from "@/server/queries/shorts";
+import { resolveMediaPath } from "@/server/media/storage";
+import { getYouTubeConfig, YouTubeError } from "@/server/providers/youtube";
+import { buildQualityInput, getShort, getShortPublishContext, isRenderCurrent } from "@/server/queries/shorts";
+import { getYouTubeClient, getYouTubeConnection } from "@/server/youtube/connection";
 
 import type { ActionResult } from "./ideas";
 
 // No auth yet: this app only runs locally. Add an auth check to every action
 // before deploying anywhere reachable from the network.
-// Nothing here uploads to YouTube: publishing is tracked, not performed.
+// Nothing is ever uploaded or published automatically: publishShortToYouTube runs only when the user
+// clicks it and confirms, and only for a Short they explicitly approved after review.
 
 const idSchema = z.uuid();
 
@@ -59,11 +67,11 @@ async function loadShort(id: string) {
   return row ?? null;
 }
 
-const LOCKED = "Published Shorts are locked. Mark it as not published first to edit it.";
+const LOCKED = "Published or uploaded Shorts are locked. Mark it as not published on the Publishing page first to edit it.";
 
-/** Editing an approved or scheduled Short sends it back to draft so it is approved again. */
+/** Editing a Short that is in or past review sends it back to draft, so it is reviewed and approved again. */
 function afterEdit(status: ShortStatus) {
-  return status === "approved" || status === "scheduled" ? { status: "draft" as const, scheduledAt: null } : {};
+  return status === "draft" || status === "rejected" ? {} : { status: "draft" as const, scheduledAt: null, publishError: null };
 }
 
 function guarded(name: string, fn: () => Promise<ActionResult>) {
@@ -141,7 +149,7 @@ export async function switchToCurrentSceneClip(id: string): Promise<ActionResult
   return guarded("switchToCurrentSceneClip", async () => {
     const short = await loadShort(shortId.data);
     if (!short?.sceneId) return { ok: false, message: "The scene no longer exists" };
-    if (short.status === "published") return { ok: false, message: LOCKED };
+    if (isShortLocked(short)) return { ok: false, message: LOCKED };
     const [row] = await db
       .select({ asset: assets })
       .from(productionScenes)
@@ -209,7 +217,7 @@ export async function analyzeShort(id: string): Promise<ActionResult> {
     return { ok: false, message: DB_ERROR };
   }
   if (!short) return { ok: false, message: "Short not found" };
-  if (short.status === "published") return { ok: false, message: LOCKED };
+  if (isShortLocked(short)) return { ok: false, message: LOCKED };
 
   const content = short.story?.content ?? null;
   const storyScene = storySceneFor(content, short.sceneNumber, short.sceneTitle);
@@ -291,7 +299,7 @@ export async function applySuggestedMetadata(id: string): Promise<ActionResult> 
   return guarded("applySuggestedMetadata", async () => {
     const short = await loadShort(shortId.data);
     if (!short) return { ok: false, message: "Short not found" };
-    if (short.status === "published") return { ok: false, message: LOCKED };
+    if (isShortLocked(short)) return { ok: false, message: LOCKED };
     if (!short.analysis) return { ok: false, message: "Run the analysis first" };
     const m = short.analysis.metadata;
     await db
@@ -371,7 +379,7 @@ export async function updateShortMetadata(id: string, _prev: ShortMetadataState,
   try {
     const short = await loadShort(shortId.data);
     if (!short) return { ok: false, message: "Short not found" };
-    if (short.status === "published") return { ok: false, message: LOCKED };
+    if (isShortLocked(short)) return { ok: false, message: LOCKED };
     const d = parsed.data;
     const metadataChanged =
       d.title !== short.title ||
@@ -409,7 +417,7 @@ export async function setMetadataApproval(id: string, approved: boolean): Promis
   return guarded("setMetadataApproval", async () => {
     const short = await loadShort(shortId.data);
     if (!short) return { ok: false, message: "Short not found" };
-    if (short.status === "published") return { ok: false, message: LOCKED };
+    if (isShortLocked(short)) return { ok: false, message: LOCKED };
     if (approved && !short.title.trim()) return { ok: false, message: "Add a title first" };
     await db
       .update(shorts)
@@ -428,7 +436,7 @@ export async function updateVideoSettings(id: string, settings: unknown): Promis
   return guarded("updateVideoSettings", async () => {
     const short = await loadShort(shortId.data);
     if (!short) return { ok: false, message: "Short not found" };
-    if (short.status === "published") return { ok: false, message: LOCKED };
+    if (isShortLocked(short)) return { ok: false, message: LOCKED };
     const changed = JSON.stringify(parsed.data) !== JSON.stringify(short.videoSettings);
     await db
       .update(shorts)
@@ -448,7 +456,7 @@ export async function updateCaptions(id: string, text: string, reviewed: boolean
   return guarded("updateCaptions", async () => {
     const short = await loadShort(shortId.data);
     if (!short) return { ok: false, message: "Short not found" };
-    if (short.status === "published") return { ok: false, message: LOCKED };
+    if (isShortLocked(short)) return { ok: false, message: LOCKED };
     const changed = JSON.stringify(cues) !== JSON.stringify(short.captions);
     await db
       .update(shorts)
@@ -466,7 +474,7 @@ export async function rebuildCaptions(id: string): Promise<ActionResult> {
   return guarded("rebuildCaptions", async () => {
     const short = await loadShort(shortId.data);
     if (!short) return { ok: false, message: "Short not found" };
-    if (short.status === "published") return { ok: false, message: LOCKED };
+    if (isShortLocked(short)) return { ok: false, message: LOCKED };
     if (!short.sceneId) return { ok: false, message: "The scene no longer exists" };
     const [scene] = await db
       .select({ dialogue: productionScenes.dialogue, durationSeconds: productionScenes.durationSeconds })
@@ -501,7 +509,7 @@ export async function renderShort(id: string): Promise<ActionResult> {
     return { ok: false, message: DB_ERROR };
   }
   if (!short) return { ok: false, message: "Short not found" };
-  if (short.status === "published") return { ok: false, message: LOCKED };
+  if (isShortLocked(short)) return { ok: false, message: LOCKED };
   if (!short.sourceFilePath) return { ok: false, message: "The source clip isn't stored locally" };
 
   try {
@@ -563,18 +571,45 @@ export async function probeShortSource(id: string): Promise<ActionResult> {
 
 // ---------- Review ----------
 
-export async function approveShort(id: string): Promise<ActionResult> {
+async function reviewBlockers(short: Short) {
+  const ffmpegAvailable = Boolean(await getFfmpegVersion());
+  const checks = evaluateQuality(buildQualityInput(short, { ffmpegAvailable, hasDialogue: short.captions.length > 0 }));
+  return approvalBlockers(checks, { rendered: Boolean(short.renderFilePath), metadataApproved: Boolean(short.metadataApprovedAt) });
+}
+
+/** Draft -> ready for review, once the automatic checks pass. Approval is a separate, explicit step. */
+export async function submitShortForReview(id: string): Promise<ActionResult> {
   const shortId = idSchema.safeParse(id);
   if (!shortId.success) return { ok: false, message: "Invalid Short id" };
+  return guarded("submitShortForReview", async () => {
+    const short = await loadShort(shortId.data);
+    if (!short) return { ok: false, message: "Short not found" };
+    if (short.status !== "draft") return { ok: false, message: "Only draft Shorts can be submitted for review" };
+    const blockers = await reviewBlockers(short);
+    if (blockers.length) return { ok: false, message: blockers[0] };
+    await db.update(shorts).set({ status: "ready_for_review", reviewNotes: null }).where(eq(shorts.id, short.id));
+    revalidateShorts(short.id);
+    return { ok: true, message: "Ready for review. Watch the rendered version, then approve or reject it." };
+  });
+}
+
+/** Ready for review -> approved. `confirmed` is the reviewer's explicit sign-off from the UI. */
+export async function approveShort(id: string, confirmed: boolean): Promise<ActionResult> {
+  const shortId = idSchema.safeParse(id);
+  if (!shortId.success) return { ok: false, message: "Invalid Short id" };
+  if (confirmed !== true) return { ok: false, message: "Confirm that you watched the Short before approving it" };
   return guarded("approveShort", async () => {
     const short = await loadShort(shortId.data);
     if (!short) return { ok: false, message: "Short not found" };
-    if (short.status !== "draft") return { ok: false, message: "Only draft Shorts can be approved" };
-    const ffmpegAvailable = Boolean(await getFfmpegVersion());
-    const checks = evaluateQuality(buildQualityInput(short, { ffmpegAvailable, hasDialogue: short.captions.length > 0 }));
-    const blockers = approvalBlockers(checks, { rendered: Boolean(short.renderFilePath), metadataApproved: Boolean(short.metadataApprovedAt) });
+    if (short.status !== "ready_for_review") return { ok: false, message: "Submit the Short for review before approving it" };
+    const blockers = await reviewBlockers(short);
     if (blockers.length) return { ok: false, message: blockers[0] };
-    await db.update(shorts).set({ status: "approved", reviewedAt: new Date(), reviewNotes: null }).where(eq(shorts.id, short.id));
+    const result = await db
+      .update(shorts)
+      .set({ status: "approved", reviewedAt: new Date(), reviewNotes: null })
+      .where(and(eq(shorts.id, short.id), eq(shorts.status, "ready_for_review")))
+      .returning({ id: shorts.id });
+    if (!result.length) return { ok: false, message: "The Short changed while you were reviewing it. Reload and review it again." };
     revalidateShorts(short.id);
     return { ok: true, message: "Short approved and added to the publishing queue" };
   });
@@ -587,10 +622,10 @@ export async function rejectShort(id: string, notes: string): Promise<ActionResu
   return guarded("rejectShort", async () => {
     const short = await loadShort(shortId.data);
     if (!short) return { ok: false, message: "Short not found" };
-    if (short.status === "published") return { ok: false, message: LOCKED };
+    if (isShortLocked(short)) return { ok: false, message: LOCKED };
     await db
       .update(shorts)
-      .set({ status: "rejected", scheduledAt: null, reviewedAt: new Date(), reviewNotes: reason.data || null })
+      .set({ status: "rejected", scheduledAt: null, publishError: null, reviewedAt: new Date(), reviewNotes: reason.data || null })
       .where(eq(shorts.id, short.id));
     revalidateShorts(short.id);
     return { ok: true, message: "Short rejected. It won't be published; reopen it any time." };
@@ -603,14 +638,19 @@ export async function reopenShort(id: string): Promise<ActionResult> {
   return guarded("reopenShort", async () => {
     const short = await loadShort(shortId.data);
     if (!short) return { ok: false, message: "Short not found" };
-    if (short.status === "published") return { ok: false, message: LOCKED };
-    await db.update(shorts).set({ status: "draft", scheduledAt: null }).where(eq(shorts.id, short.id));
+    if (isShortLocked(short)) return { ok: false, message: LOCKED };
+    await db.update(shorts).set({ status: "draft", scheduledAt: null, publishError: null }).where(eq(shorts.id, short.id));
     revalidateShorts(short.id);
     return { ok: true, message: "Back to draft" };
   });
 }
 
-// ---------- Publishing (tracking only: nothing is uploaded) ----------
+// ---------- Publishing ----------
+// Every step here is a user action. Scheduling only records a time in this app; the video goes to
+// YouTube only from publishShortToYouTube, which the user starts and confirms per Short.
+
+const NOT_APPROVED = "Only approved Shorts can be scheduled or published. Approve it in the Shorts Studio first.";
+const ALREADY_UPLOADED = "This Short is already on YouTube. Change it in YouTube Studio.";
 
 export async function scheduleShort(id: string, when: string): Promise<ActionResult> {
   const shortId = idSchema.safeParse(id);
@@ -621,10 +661,14 @@ export async function scheduleShort(id: string, when: string): Promise<ActionRes
   return guarded("scheduleShort", async () => {
     const short = await loadShort(shortId.data);
     if (!short) return { ok: false, message: "Short not found" };
-    if (short.status !== "approved" && short.status !== "scheduled") return { ok: false, message: "Approve the Short before scheduling it" };
-    await db.update(shorts).set({ status: "scheduled", scheduledAt: date.data }).where(eq(shorts.id, short.id));
+    if (!isPublishable(short.status)) return { ok: false, message: NOT_APPROVED };
+    if (short.youtubeVideoId) return { ok: false, message: ALREADY_UPLOADED };
+    await db
+      .update(shorts)
+      .set({ status: "scheduled", scheduledAt: date.data, publishError: null, publishFailedAt: null })
+      .where(eq(shorts.id, short.id));
     revalidateShorts(short.id);
-    return { ok: true, message: "Scheduled. Set the same time in YouTube Studio when you upload: nothing is published automatically." };
+    return { ok: true, message: "Time saved. Nothing is uploaded until you choose “Upload to YouTube” for this Short." };
   });
 }
 
@@ -634,13 +678,172 @@ export async function unscheduleShort(id: string): Promise<ActionResult> {
   return guarded("unscheduleShort", async () => {
     const result = await db
       .update(shorts)
-      .set({ status: "approved", scheduledAt: null })
-      .where(and(eq(shorts.id, shortId.data), eq(shorts.status, "scheduled")))
+      .set({ status: "approved", scheduledAt: null, publishError: null, publishFailedAt: null })
+      .where(and(eq(shorts.id, shortId.data), inArray(shorts.status, ["scheduled", "failed"]), isNull(shorts.youtubeVideoId)))
       .returning({ id: shorts.id });
-    if (!result.length) return { ok: false, message: "The Short isn't scheduled" };
+    if (!result.length) return { ok: false, message: "The Short isn't scheduled, or is already on YouTube" };
     revalidateShorts(shortId.data);
     return { ok: true, message: "Schedule removed" };
   });
+}
+
+const publishSchema = z.object({
+  id: idSchema,
+  mode: z.enum(["now", "schedule"]),
+  // The literal `true` from the confirmation dialog: an upload never happens without it.
+  confirmed: z.literal(true),
+});
+
+/** An upload that started this long ago without finishing is treated as abandoned. */
+const UPLOAD_LOCK_MS = 30 * 60_000;
+/** YouTube needs a little lead time for a scheduled publish. */
+const MIN_SCHEDULE_LEAD_MS = 5 * 60_000;
+
+/**
+ * Uploads an approved Short to the connected channel, either public now or private with YouTube's
+ * own scheduled publish time. Runs only when the user confirms it in the publishing queue.
+ */
+export async function publishShortToYouTube(id: string, mode: "now" | "schedule", confirmed: boolean): Promise<ActionResult> {
+  const input = publishSchema.safeParse({ id, mode, confirmed });
+  if (!input.success) return { ok: false, message: "Confirm the upload in the dialog first" };
+  if (!getYouTubeConfig().configured) return { ok: false, message: "YouTube isn't configured. See Settings." };
+
+  let claimed = false;
+  try {
+    const context = await getShortPublishContext(input.data.id);
+    if (!context) return { ok: false, message: "Short not found" };
+    const { short } = context;
+    if (!isPublishable(short.status) || !short.reviewedAt) return { ok: false, message: NOT_APPROVED };
+    if (short.youtubeVideoId) return { ok: false, message: ALREADY_UPLOADED };
+    if (!short.metadataApprovedAt) return { ok: false, message: "Approve the metadata first" };
+    if (!short.renderFilePath || !isRenderCurrent(short)) return { ok: false, message: "The vertical render is missing or out of date. Re-render it." };
+    const file = resolveMediaPath(short.renderFilePath);
+    if (!file) return { ok: false, message: "The rendered file isn't in the media folder" };
+    if (input.data.mode === "schedule" && (!short.scheduledAt || short.scheduledAt.getTime() < Date.now() + MIN_SCHEDULE_LEAD_MS)) {
+      return { ok: false, message: "Set a publish time at least 5 minutes from now first, or publish now" };
+    }
+    if (!(await getYouTubeConnection())) return { ok: false, message: "Connect a YouTube channel in Settings first" };
+
+    // Claim the Short so a double click or a second tab can't upload it twice.
+    const claim = await db
+      .update(shorts)
+      .set({ uploadStartedAt: new Date() })
+      .where(
+        and(
+          eq(shorts.id, short.id),
+          eq(shorts.status, short.status),
+          isNull(shorts.youtubeVideoId),
+          or(isNull(shorts.uploadStartedAt), lt(shorts.uploadStartedAt, new Date(Date.now() - UPLOAD_LOCK_MS))),
+        ),
+      )
+      .returning({ id: shorts.id });
+    if (!claim.length) return { ok: false, message: "An upload of this Short is already running, or it changed. Reload the page." };
+    claimed = true;
+
+    const metadata = buildYouTubeMetadata({
+      title: short.title,
+      description: short.description,
+      hashtags: short.hashtags,
+      playlist: short.playlist,
+      language: context.storyLanguage,
+      madeForKids: context.madeForKids ?? true,
+      containsSyntheticMedia: context.containsSyntheticMedia ?? true,
+      scheduledAt: input.data.mode === "schedule" ? short.scheduledAt : null,
+      hasCaptions: short.captions.length > 0,
+      visibility: input.data.mode === "now" ? "public" : "private",
+    });
+
+    let video;
+    try {
+      const client = await getYouTubeClient();
+      const bytes = await readFile(file);
+      video = await client.uploadVideo({ metadata: { snippet: metadata.snippet, status: metadata.status }, bytes, contentType: "video/mp4" });
+    } catch (error) {
+      const known = error instanceof YouTubeError;
+      let message = known ? error.message : "The upload failed unexpectedly";
+      // A lost response after the bytes arrived may still have created the video.
+      if (!known || error.status === null || error.status >= 500) message += " Check YouTube Studio before retrying, in case it went through.";
+      console.error("publishShortToYouTube upload failed", error);
+      await db
+        .update(shorts)
+        .set({ status: "failed", publishError: message, publishFailedAt: new Date(), uploadStartedAt: null })
+        .where(eq(shorts.id, short.id));
+      claimed = false;
+      revalidateShorts(short.id);
+      return { ok: false, message };
+    }
+
+    const now = input.data.mode === "now";
+    try {
+      await db
+        .update(shorts)
+        .set({
+          status: now ? "published" : "scheduled",
+          youtubeVideoId: video.id,
+          youtubeUrl: `https://youtube.com/shorts/${video.id}`,
+          publishedAt: now ? new Date() : null,
+          ...(now ? { scheduledAt: null } : {}),
+          uploadStartedAt: null,
+          publishError: null,
+          publishFailedAt: null,
+        })
+        .where(eq(shorts.id, short.id));
+    } catch (error) {
+      console.error(`publishShortToYouTube: uploaded video ${video.id} but couldn't record it`, error);
+      return { ok: false, message: `Uploaded to YouTube (video ${video.id}), but saving that here failed. Don't upload it again: mark it published with that link.` };
+    }
+    claimed = false;
+    revalidateShorts(short.id);
+
+    // Projects that haven't passed Google's API audit get their uploads locked to private.
+    if (now && video.status?.privacyStatus && video.status.privacyStatus !== "public") {
+      return { ok: true, message: `Uploaded, but YouTube set it to ${video.status.privacyStatus}. Unaudited API projects can only upload private videos: make it public in YouTube Studio.` };
+    }
+    return {
+      ok: true,
+      message: now
+        ? "Published on YouTube. It may take a few minutes to process."
+        : "Uploaded as private. YouTube will publish it at the scheduled time.",
+    };
+  } catch (error) {
+    console.error("publishShortToYouTube failed", error);
+    return { ok: false, message: DB_ERROR };
+  } finally {
+    if (claimed) await db.update(shorts).set({ uploadStartedAt: null }).where(eq(shorts.id, input.data.id)).catch(() => undefined);
+  }
+}
+
+/** Reads the uploaded video's status from YouTube and records a scheduled Short going live. */
+export async function refreshYouTubeStatus(id: string): Promise<ActionResult> {
+  const shortId = idSchema.safeParse(id);
+  if (!shortId.success) return { ok: false, message: "Invalid Short id" };
+  try {
+    const short = await loadShort(shortId.data);
+    if (!short) return { ok: false, message: "Short not found" };
+    if (!short.youtubeVideoId) return { ok: false, message: "This Short wasn't uploaded by this app" };
+    const [video] = await (await getYouTubeClient()).getVideos([short.youtubeVideoId]);
+    if (!video) return { ok: false, message: "YouTube can't find this video. If you deleted it, use “Forget upload”." };
+    const status = video.status ?? {};
+    if (status.uploadStatus === "failed" || status.uploadStatus === "rejected") {
+      const message = `YouTube ${status.uploadStatus} the video${status.failureReason || status.rejectionReason ? ` (${status.failureReason ?? status.rejectionReason})` : ""}.`;
+      await db.update(shorts).set({ status: "failed", publishError: message, publishFailedAt: new Date() }).where(eq(shorts.id, short.id));
+      revalidateShorts(short.id);
+      return { ok: false, message };
+    }
+    if (status.privacyStatus === "public" && short.status !== "published") {
+      await db
+        .update(shorts)
+        .set({ status: "published", publishedAt: short.scheduledAt && short.scheduledAt < new Date() ? short.scheduledAt : new Date() })
+        .where(eq(shorts.id, short.id));
+      revalidateShorts(short.id);
+      return { ok: true, message: "It's live: marked as published" };
+    }
+    return { ok: true, message: `On YouTube: ${status.privacyStatus ?? "unknown visibility"}, ${status.uploadStatus ?? "processing"}` };
+  } catch (error) {
+    if (error instanceof YouTubeError) return { ok: false, message: error.message };
+    console.error("refreshYouTubeStatus failed", error);
+    return { ok: false, message: DB_ERROR };
+  }
 }
 
 const youtubeUrlSchema = z
@@ -649,6 +852,7 @@ const youtubeUrlSchema = z
   .max(300)
   .refine((s) => s === "" || /^https:\/\/(www\.|m\.)?(youtube\.com|youtu\.be)\//.test(s), "Enter a youtube.com or youtu.be link");
 
+/** For Shorts uploaded by hand in YouTube Studio. */
 export async function markPublished(id: string, url: string): Promise<ActionResult> {
   const shortId = idSchema.safeParse(id);
   const link = youtubeUrlSchema.safeParse(url);
@@ -657,28 +861,48 @@ export async function markPublished(id: string, url: string): Promise<ActionResu
   return guarded("markPublished", async () => {
     const short = await loadShort(shortId.data);
     if (!short) return { ok: false, message: "Short not found" };
-    if (short.status !== "approved" && short.status !== "scheduled") return { ok: false, message: "Only approved or scheduled Shorts can be marked published" };
+    if (!isPublishable(short.status)) return { ok: false, message: "Only approved or scheduled Shorts can be marked published" };
+    if (short.youtubeVideoId) return { ok: false, message: "This Short was uploaded by the app. Use “Check YouTube” instead." };
     await db
       .update(shorts)
-      .set({ status: "published", publishedAt: short.scheduledAt && short.scheduledAt < new Date() ? short.scheduledAt : new Date(), youtubeUrl: link.data || null })
+      .set({
+        status: "published",
+        publishedAt: short.scheduledAt && short.scheduledAt < new Date() ? short.scheduledAt : new Date(),
+        youtubeUrl: link.data || null,
+        publishError: null,
+        publishFailedAt: null,
+      })
       .where(eq(shorts.id, short.id));
     revalidateShorts(short.id);
     return { ok: true, message: "Marked as published. Add its numbers on the Analytics page." };
   });
 }
 
+/**
+ * Undoes "published" (or forgets an app upload that is still scheduled). Only this app's record
+ * changes: a video on YouTube stays there until it is removed in YouTube Studio.
+ */
 export async function unmarkPublished(id: string): Promise<ActionResult> {
   const shortId = idSchema.safeParse(id);
   if (!shortId.success) return { ok: false, message: "Invalid Short id" };
   return guarded("unmarkPublished", async () => {
-    const result = await db
+    const short = await loadShort(shortId.data);
+    if (!short) return { ok: false, message: "Short not found" };
+    const uploaded = short.youtubeVideoId !== null;
+    if (short.status !== "published" && !uploaded) return { ok: false, message: "The Short isn't published or uploaded" };
+    await db
       .update(shorts)
-      .set({ status: "approved", publishedAt: null })
-      .where(and(eq(shorts.id, shortId.data), eq(shorts.status, "published")))
-      .returning({ id: shorts.id });
-    if (!result.length) return { ok: false, message: "The Short isn't marked published" };
-    revalidateShorts(shortId.data);
-    return { ok: true, message: "Back to approved" };
+      .set({
+        status: "approved",
+        publishedAt: null,
+        ...(uploaded ? { youtubeVideoId: null, youtubeUrl: null, scheduledAt: null } : {}),
+      })
+      .where(eq(shorts.id, short.id));
+    revalidateShorts(short.id);
+    return {
+      ok: true,
+      message: uploaded ? "Upload forgotten. The video stays on YouTube until you delete it in YouTube Studio." : "Back to approved",
+    };
   });
 }
 

@@ -4,15 +4,17 @@ import { findPromptConcerns } from "./production";
 import type { StoryScene } from "./stories";
 
 // Shared by the DB schema, server actions, the Claude prompt and client components.
-export const SHORT_STATUSES = ["draft", "approved", "rejected", "scheduled", "published"] as const;
+export const SHORT_STATUSES = ["draft", "ready_for_review", "approved", "rejected", "scheduled", "published", "failed"] as const;
 export type ShortStatus = (typeof SHORT_STATUSES)[number];
 
 export const SHORT_STATUS_LABELS: Record<ShortStatus, string> = {
   draft: "Draft",
+  ready_for_review: "Ready for review",
   approved: "Approved",
   rejected: "Rejected",
   scheduled: "Scheduled",
   published: "Published",
+  failed: "Failed",
 };
 
 /** A scheduled Short whose planned time has passed without being marked published. */
@@ -21,7 +23,22 @@ export function isOverdue(status: ShortStatus, scheduledAt: Date | null, now = D
 }
 
 /** Statuses that appear in the publishing queue. */
-export const QUEUE_STATUSES: readonly ShortStatus[] = ["approved", "scheduled", "published"];
+export const QUEUE_STATUSES: readonly ShortStatus[] = ["approved", "scheduled", "failed", "published"];
+
+/**
+ * Statuses a Short may be published or scheduled from. Every one of them is reached only through an
+ * explicit approval in the Shorts Studio; any edit sends the Short back to draft.
+ */
+export const PUBLISHABLE_STATUSES: readonly ShortStatus[] = ["approved", "scheduled", "failed"];
+
+export function isPublishable(status: ShortStatus) {
+  return PUBLISHABLE_STATUSES.includes(status);
+}
+
+/** Published Shorts, and Shorts already uploaded to YouTube, can't be edited in the studio. */
+export function isShortLocked(short: { status: ShortStatus; youtubeVideoId: string | null }) {
+  return short.status === "published" || short.youtubeVideoId !== null;
+}
 
 /** YouTube limits (Data API `videos` resource). */
 export const TITLE_MAX = 100;
@@ -315,8 +332,9 @@ export function buildDescription(description: string, hashtags: string[]) {
 
 /**
  * Body for the YouTube Data API `videos.insert` call (snippet + status), plus the extras that
- * are separate calls (playlist, caption track). Nothing is uploaded by this app yet: use it to fill
- * in YouTube Studio by hand, or for a later upload integration.
+ * are separate calls (playlist, caption track). Used for the upload integration and for filling
+ * in YouTube Studio by hand. `visibility: "public"` publishes immediately; otherwise the upload is
+ * private, and a future `scheduledAt` makes YouTube publish it at that time.
  */
 export function buildYouTubeMetadata(input: {
   title: string;
@@ -328,6 +346,7 @@ export function buildYouTubeMetadata(input: {
   containsSyntheticMedia: boolean;
   scheduledAt: Date | null;
   hasCaptions: boolean;
+  visibility?: "public" | "private";
 }) {
   const language = input.language ? LANGUAGE_CODES[input.language.trim().toLowerCase()] : undefined;
   const tags: string[] = [];
@@ -338,7 +357,8 @@ export function buildYouTubeMetadata(input: {
     tagChars += tag.length + (tags.length ? 1 : 0);
     tags.push(tag);
   }
-  const future = input.scheduledAt && input.scheduledAt.getTime() > Date.now() ? input.scheduledAt : null;
+  const publicNow = input.visibility === "public";
+  const future = !publicNow && input.scheduledAt && input.scheduledAt.getTime() > Date.now() ? input.scheduledAt : null;
   return {
     snippet: {
       title: input.title.trim().slice(0, TITLE_MAX),
@@ -349,7 +369,7 @@ export function buildYouTubeMetadata(input: {
     },
     status: {
       // Scheduled uploads must be private with a publishAt time; YouTube makes them public then.
-      privacyStatus: "private" as const,
+      privacyStatus: publicNow ? ("public" as const) : ("private" as const),
       ...(future ? { publishAt: future.toISOString() } : {}),
       selfDeclaredMadeForKids: input.madeForKids,
       containsSyntheticMedia: input.containsSyntheticMedia,

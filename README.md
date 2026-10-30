@@ -2,7 +2,7 @@
 
 Personal AI-assisted YouTube Kids content production dashboard.
 
-**Current milestone (4):** dashboard, **Idea Discovery**, the AI-powered **Story Workshop**, the **Production Studio** (scene plans, Higgsfield generation, asset review), the **Characters** library and the **Shorts Studio** (one vertical YouTube Short per scene, with a publishing queue and manual analytics) are functional. Playlists and Advertising Budget have placeholder pages only. There are no YouTube or advertising integrations, nothing is ever published automatically, and no advertising money is spent.
+**Current milestone (4):** dashboard, **Idea Discovery**, the AI-powered **Story Workshop**, the **Production Studio** (scene plans, Higgsfield generation, asset review), the **Characters** library and the **Shorts Studio** (one vertical YouTube Short per scene, with a publishing queue and manual analytics) are functional. Playlists and Advertising Budget have placeholder pages only. A YouTube channel can be connected over OAuth to upload approved Shorts, but only when you start and confirm each upload: nothing is ever published automatically. There are no advertising integrations and no advertising money is spent.
 
 **Stack:** Next.js 16 (App Router, Cache Components) · TypeScript · Tailwind CSS 4 · shadcn/ui · PostgreSQL 17 (Docker) · Drizzle ORM · Zod · Anthropic TypeScript SDK · FFmpeg · Vitest
 
@@ -15,7 +15,7 @@ and measuring videos; see [FFmpeg setup](#ffmpeg-setup).
 npm install
 Copy-Item .env.example .env.local   # if .env.local doesn't exist yet
 npm run db:up                       # start Postgres on localhost:5440
-npm run db:migrate                  # apply migrations (includes Story Workshop, Production Studio and Shorts tables)
+npm run db:migrate                  # apply migrations (includes Story Workshop, Production Studio, Shorts and YouTube tables)
 npm run dev                         # http://localhost:3000
 ```
 
@@ -57,7 +57,7 @@ Production build: `npm run build` then `npm run start`.
 | Characters | Reusable character library with consistent visual descriptions, reference images, approval for reuse, appearances across stories |
 | Asset library | All scene images and clips with preview, provider, model, date, duration, size, file location and review status; filters in the URL |
 | Shorts Studio | One Short per approved scene video; Claude standalone review, hook, narration/music/sound suggestions and metadata; 9:16 rendering with FFmpeg; captions; side-by-side source and final previews; quality control; approve / reject |
-| Publishing | Queue of approved, scheduled and published Shorts; manual scheduling; YouTube-ready metadata and upload checklist. Nothing is uploaded |
+| Publishing | Review → approval → schedule/publish workflow; confirmed uploads to a connected YouTube channel (OAuth), or YouTube-ready metadata for uploading by hand. Nothing is published automatically |
 | Analytics | Per-Short performance snapshots entered from YouTube Studio; which metrics exist where |
 | Settings | Load / remove sample data, workspace info, Higgsfield, FFmpeg and media folder status |
 | Other modules | Placeholder pages (Playlists, Advertising Budget) describing the planned scope |
@@ -362,21 +362,82 @@ Worked out on every page load from stored measurements (nothing is stored as "pa
 Claude reviews the script, and the generated clip may differ from it. The audio check can't detect
 garbled lines or the wrong character speaking, so listening is part of approval.
 
+### Publishing workflow
+
+```
+Draft ──Submit for review──▶ Ready for review ──Approve (you confirm you watched it)──▶ Approved
+                                    │                                                     │
+                                  Reject ──▶ Rejected                    Schedule (time only) ──▶ Scheduled
+                                                                                          │
+                              Upload to YouTube (confirmation dialog) ◀──────────────────┘
+                                    │                     │
+                               Published            Failed (error kept; retry, reschedule or back to draft)
+```
+
+| Status | Meaning |
+| --- | --- |
+| Draft | Being edited. Any edit to a Short in a later status (except published/uploaded) sends it back here |
+| Ready for review | Passed the automatic checks (render, approved metadata, no failing quality checks) |
+| Approved | You watched it and approved it. Only now can it be scheduled or published |
+| Scheduled | Has a planned publish time. If uploaded by the app, YouTube holds it private and publishes it then |
+| Published | Live on YouTube (uploaded by the app, or marked published after a manual upload) |
+| Failed | The upload was refused or broke; the reason is shown and nothing was published |
+| Rejected | Won't be published; reopen it any time |
+
+Approval is never implied: *Submit for review* and *Approve* are separate clicks, the server
+re-checks the gates on approval, and the publish action requires an explicit `confirmed: true` from
+the upload dialog. There is no cron job, queue worker or background task that uploads or publishes.
+
 ### Publishing queue (`/publishing`)
 
-Approved, scheduled and published Shorts, with counts per status. Statuses: Draft → Approved →
-Scheduled → Published (plus Rejected).
+Approved, scheduled, failed and published Shorts, with counts per status.
 
-- **Schedule** records a future time (in your local time zone). It doesn't upload anything; set the
-  same time in YouTube Studio.
+- **Schedule** records a future time (in your local time zone). It doesn't upload anything.
+- **Upload to YouTube** (shown when a channel is connected) opens a confirmation dialog: *Publish
+  now* (public) or, for a Short scheduled at least 5 minutes ahead, *Upload now, publish at the
+  scheduled time* (uploaded private with YouTube's `publishAt`; YouTube makes it public then). You
+  tick an approval checkbox before the button enables. Uploaded Shorts are locked; **Check YouTube**
+  reads the video status and marks a scheduled Short published once it is public; **Forget upload**
+  only clears this app's record (delete the video in YouTube Studio).
+- A failed upload sets the Short to **Failed** with the reason. If the connection dropped mid-upload,
+  check YouTube Studio before retrying, since the video may already exist.
 - **YouTube metadata** shows the title, the description with hashtags appended, tags (capped at
   YouTube's 500 characters), a settings checklist (made for kids, altered or synthetic content,
   visibility, playlist, captions, category), download links for the vertical `.mp4` and the `.srt`,
   and the equivalent YouTube Data API `videos.insert` body (`privacyStatus: private` plus `publishAt`
   for scheduled uploads, `selfDeclaredMadeForKids`, `containsSyntheticMedia`). *Made for kids* and
   *synthetic media* come from the linked idea, defaulting to yes.
-- **Mark published** (optionally with the YouTube link) once it is live. Published Shorts are locked
-  until you undo this.
+- **Mark published** (optionally with the YouTube link) for Shorts you uploaded in YouTube Studio
+  yourself. Published Shorts are locked until you undo this.
+
+### YouTube channel connection (Settings)
+
+OAuth 2.0 authorization-code flow with PKCE, run entirely on the server:
+
+1. In [Google Cloud Console](https://console.cloud.google.com/), enable **YouTube Data API v3**,
+   configure the OAuth consent screen (add yourself as a test user while it is in *Testing*), and
+   create an OAuth client of type **Web application** with the authorized redirect URI
+   `http://127.0.0.1:3000/api/youtube/callback` (use the origin you open the app on).
+2. Put `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` and `YOUTUBE_TOKEN_KEY` in `.env.local` (see
+   `.env.example`), restart, and click **Connect YouTube channel** in Settings.
+
+Security notes:
+
+- Scopes are limited to `youtube.upload` and `youtube.readonly`; a grant missing either is revoked
+  and rejected.
+- The client secret and tokens are only read in `server-only` modules
+  (`src/server/providers/youtube.ts`, `src/server/youtube/`). The browser only ever sees the consent
+  URL (client id, redirect URI, PKCE challenge, state) and the channel's public name.
+- The `state` and PKCE verifier live in a 10-minute, httpOnly, `SameSite=Lax` cookie scoped to
+  `/api/youtube`, compared in constant time on the callback.
+- Refresh and access tokens are stored AES-256-GCM encrypted with `YOUTUBE_TOKEN_KEY` in
+  `youtube_connections`. **Disconnect** revokes the grant at Google and deletes the row.
+- The app still has no login of its own: keep it on localhost.
+
+Google's limits to know about: an upload costs about 1,600 of the default 10,000 daily quota units,
+and API projects that haven't passed Google's API compliance audit have their uploads locked to
+**private**. The app tells you when YouTube kept a "publish now" upload private, so you can make it
+public in YouTube Studio. Captions and playlists are still added in YouTube Studio.
 
 ### Analytics (`/analytics`)
 

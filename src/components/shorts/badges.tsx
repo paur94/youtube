@@ -11,13 +11,16 @@ const SKY = "bg-sky-100 text-sky-800 dark:bg-sky-950 dark:text-sky-300";
 const VIOLET = "bg-violet-100 text-violet-800 dark:bg-violet-950 dark:text-violet-300";
 const GREEN = "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300";
 const RED = "bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300";
+const ORANGE = "bg-orange-100 text-orange-800 dark:bg-orange-950 dark:text-orange-300";
 
 const STATUS_STYLES: Record<ShortStatus, string> = {
   draft: MUTED,
+  ready_for_review: AMBER,
   approved: SKY,
   rejected: RED,
   scheduled: VIOLET,
   published: GREEN,
+  failed: ORANGE,
 };
 
 export function ShortStatusBadge({ status }: { status: ShortStatus }) {

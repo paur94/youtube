@@ -181,6 +181,22 @@ export async function getPublishingQueue() {
     .orderBy(sql`${shorts.scheduledAt} asc nulls last`, ...orderBy);
 }
 
+/** A Short plus the story language and compliance flags its YouTube metadata needs. */
+export async function getShortPublishContext(id: string) {
+  const [row] = await db
+    .select({
+      short: shorts,
+      storyLanguage: stories.language,
+      madeForKids: ideas.madeForKids,
+      containsSyntheticMedia: ideas.containsSyntheticMedia,
+    })
+    .from(shorts)
+    .leftJoin(stories, eq(shorts.storyId, stories.id))
+    .leftJoin(ideas, eq(stories.ideaId, ideas.id))
+    .where(eq(shorts.id, id));
+  return row ?? null;
+}
+
 export async function getShortStatusCounts() {
   const rows = await db.select({ status: shorts.status, count: sql<number>`count(*)`.mapWith(Number) }).from(shorts).groupBy(shorts.status);
   return Object.fromEntries(rows.map((r) => [r.status, r.count])) as Partial<Record<Short["status"], number>>;
