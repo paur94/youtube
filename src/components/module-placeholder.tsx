@@ -20,7 +20,8 @@ export function ModulePlaceholder({ item }: { item: Module }) {
           <CardTitle>This module is planned for a later milestone</CardTitle>
           <CardDescription>
             Nothing here is functional yet. The current milestone covers the dashboard, Idea
-            Discovery, the Story Workshop, the Production Studio and the character library.
+            Discovery, the Story Workshop, the Production Studio, the character library, the Shorts
+            Studio, publishing queue and Shorts analytics.
           </CardDescription>
         </CardHeader>
         {item.planned && (

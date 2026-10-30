@@ -3,7 +3,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { sampleContent } from "@/test/fixtures";
 
-import { DEFAULT_MODEL, describeClaudeError, getClaudeConfig, runStoryGeneration } from "./claude";
+import { z } from "zod";
+
+import { DEFAULT_MODEL, describeClaudeError, getClaudeConfig, runStoryGeneration, runStructuredGeneration } from "./claude";
 
 const request = { model: DEFAULT_MODEL, effort: "medium" as const, system: "system", user: "user" };
 const apiUsage = {
@@ -129,5 +131,44 @@ describe("getClaudeConfig", () => {
     vi.stubEnv("ANTHROPIC_MODEL", "claude-sonnet-5-5");
     vi.stubEnv("ANTHROPIC_EFFORT", "high");
     expect(getClaudeConfig()).toEqual({ configured: true, model: "claude-sonnet-5-5", effort: "high" });
+  });
+});
+
+describe("runStructuredGeneration", () => {
+  const schema = z.object({ verdict: z.string() });
+  const structured = { ...request, maxTokens: 8000, subject: "Short analysis" };
+
+  it("returns parsed data and sends the schema and token budget", async () => {
+    const { client, stream } = fakeClient(async () => ({
+      model: DEFAULT_MODEL,
+      stop_reason: "end_turn",
+      usage: apiUsage,
+      parsed_output: { verdict: "strong" },
+    }));
+    const result = await runStructuredGeneration(client, structured, schema);
+    expect(result).toMatchObject({ ok: true, data: { verdict: "strong" }, usage: { inputTokens: 1200 } });
+    expect(stream.mock.calls[0][0]).toMatchObject({
+      max_tokens: 8000,
+      fallbacks: "default",
+      output_config: { format: expect.objectContaining({ type: "json_schema" }) },
+    });
+  });
+
+  it("names the subject in refusals and unexpected errors", async () => {
+    const refused = fakeClient(async () => ({ model: DEFAULT_MODEL, stop_reason: "refusal", usage: apiUsage, parsed_output: null }));
+    expect(await runStructuredGeneration(refused.client, structured, schema)).toMatchObject({
+      ok: false,
+      message: expect.stringContaining("Short analysis"),
+    });
+
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const broken = fakeClient(async () => {
+      throw new Error("boom");
+    });
+    expect(await runStructuredGeneration(broken.client, structured, schema)).toMatchObject({
+      ok: false,
+      usage: null,
+      message: "Generating the Short analysis failed unexpectedly. Try again.",
+    });
   });
 });

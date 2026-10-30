@@ -2,6 +2,7 @@ import "server-only";
 
 import Anthropic from "@anthropic-ai/sdk";
 import { betaZodOutputFormat } from "@anthropic-ai/sdk/helpers/beta/zod";
+import type { z } from "zod";
 
 import type { TokenUsage } from "@/lib/ai-usage";
 import { storyContentSchema, type StoryContent } from "@/lib/stories";
@@ -73,7 +74,7 @@ function describeStop(message: Anthropic.Beta.BetaMessage): string | null {
 }
 
 /** Maps SDK errors to messages that tell the user what to do next. Most specific first. */
-export function describeClaudeError(error: unknown, model: string): string {
+export function describeClaudeError(error: unknown, model: string, subject = "story"): string {
   if (error instanceof Anthropic.AuthenticationError) {
     return "The Anthropic API key was rejected. Check ANTHROPIC_API_KEY in .env.local.";
   }
@@ -103,9 +104,9 @@ export function describeClaudeError(error: unknown, model: string): string {
     return `Anthropic API error${error.status ? ` ${error.status}` : ""}: ${error.message}`;
   }
   if (error instanceof Anthropic.AnthropicError) {
-    return "Claude returned a story in an unexpected format. Try generating again.";
+    return `Claude returned the ${subject} in an unexpected format. Try generating again.`;
   }
-  return "Story generation failed unexpectedly. Try again.";
+  return `Generating the ${subject} failed unexpectedly. Try again.`;
 }
 
 export async function runStoryGeneration(
@@ -149,6 +150,63 @@ export async function runStoryGeneration(
       usage: toUsage(snapshot?.usage),
       durationMs: elapsed(),
       message: stopMessage ?? describeClaudeError(error, request.model),
+    };
+  }
+}
+
+export type StructuredResult<T> = {
+  model: string;
+  usage: TokenUsage | null;
+  durationMs: number;
+} & ({ ok: true; data: T } | { ok: false; message: string });
+
+/**
+ * One structured-output request validated against a Zod schema (used by the Shorts Studio).
+ * Same request shape and error handling as story generation, with a smaller output budget.
+ */
+export async function runStructuredGeneration<S extends z.ZodType>(
+  client: Anthropic,
+  request: StoryRequest & { maxTokens: number; subject: string },
+  schema: S,
+): Promise<StructuredResult<z.infer<S>>> {
+  const started = Date.now();
+  const elapsed = () => Date.now() - started;
+  const stopMessage = (message: Anthropic.Beta.BetaMessage) => {
+    if (message.stop_reason === "refusal") {
+      const category = message.stop_details?.category;
+      return `Claude declined to write the ${request.subject}${category ? ` (safety category: ${category})` : ""}.`;
+    }
+    if (message.stop_reason === "max_tokens") return `The ${request.subject} was cut off before it was finished. Try again.`;
+    return null;
+  };
+
+  const stream = client.beta.messages.stream({
+    model: request.model,
+    max_tokens: request.maxTokens,
+    system: request.system,
+    messages: [{ role: "user", content: request.user }],
+    output_config: { effort: request.effort, format: betaZodOutputFormat(schema) },
+    betas: ["server-side-fallback-2026-07-01"],
+    fallbacks: "default",
+  });
+
+  try {
+    const message = await stream.finalMessage();
+    const base = { model: message.model, usage: toUsage(message.usage), durationMs: elapsed() };
+    const stopped = stopMessage(message);
+    if (stopped) return { ...base, ok: false, message: stopped };
+    if (!message.parsed_output) return { ...base, ok: false, message: `Claude returned an empty ${request.subject}. Try again.` };
+    return { ...base, ok: true, data: message.parsed_output as z.infer<S> };
+  } catch (error) {
+    const snapshot = stream.currentMessage;
+    const stopped = snapshot ? stopMessage(snapshot) : null;
+    if (!stopped) console.error(`Claude ${request.subject} failed`, error);
+    return {
+      ok: false,
+      model: snapshot?.model ?? request.model,
+      usage: toUsage(snapshot?.usage),
+      durationMs: elapsed(),
+      message: stopped ?? describeClaudeError(error, request.model, request.subject),
     };
   }
 }

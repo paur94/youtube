@@ -9,6 +9,7 @@ import {
   MegaphoneIcon,
   SendIcon,
   SettingsIcon,
+  SmartphoneIcon,
   SmileIcon,
 } from "lucide-react";
 
@@ -59,6 +60,13 @@ export const MODULES = {
     description: "Keep recurring characters consistent across videos",
     ready: true,
   },
+  shorts: {
+    href: "/shorts",
+    label: "Shorts Studio",
+    icon: SmartphoneIcon,
+    description: "Turn finished scenes into vertical YouTube Shorts, review them and prepare metadata",
+    ready: true,
+  },
   playlists: {
     href: "/playlists",
     label: "Playlists",
@@ -71,22 +79,15 @@ export const MODULES = {
     href: "/publishing",
     label: "Publishing",
     icon: SendIcon,
-    description: "Schedule uploads with made-for-kids settings",
-    ready: false,
-    planned: [
-      "Release calendar",
-      "Title, description and thumbnail checklist",
-      "COPPA and synthetic-media disclosure review",
-      "YouTube upload integration (later milestone)",
-    ],
+    description: "Queue, schedule and track approved Shorts. Uploading stays manual",
+    ready: true,
   },
   analytics: {
     href: "/analytics",
     label: "Analytics",
     icon: BarChart3Icon,
-    description: "Views, watch time and retention per video",
-    ready: false,
-    planned: ["Per-video and per-series performance", "Retention curves", "Idea-to-performance feedback loop"],
+    description: "Performance of each published Short, entered from YouTube Studio",
+    ready: true,
   },
   advertising: {
     href: "/advertising",
@@ -111,6 +112,6 @@ export const NAV_GROUPS: { label: string; items: Module[] }[] = [
     label: "Create",
     items: [MODULES.ideas, MODULES.stories, MODULES.production, MODULES.characters],
   },
-  { label: "Distribute", items: [MODULES.playlists, MODULES.publishing] },
+  { label: "Distribute", items: [MODULES.shorts, MODULES.publishing, MODULES.playlists] },
   { label: "Grow", items: [MODULES.analytics, MODULES.advertising] },
 ];

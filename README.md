@@ -2,19 +2,20 @@
 
 Personal AI-assisted YouTube Kids content production dashboard.
 
-**Current milestone (3):** dashboard, **Idea Discovery**, the AI-powered **Story Workshop**, the **Production Studio** (scene plans, Higgsfield generation, asset review) and the **Characters** library are functional. Playlists, Publishing, Analytics and Advertising Budget have placeholder pages only. There are no YouTube or advertising integrations, nothing is ever published automatically, and no advertising money is spent.
+**Current milestone (4):** dashboard, **Idea Discovery**, the AI-powered **Story Workshop**, the **Production Studio** (scene plans, Higgsfield generation, asset review), the **Characters** library and the **Shorts Studio** (one vertical YouTube Short per scene, with a publishing queue and manual analytics) are functional. Playlists and Advertising Budget have placeholder pages only. There are no YouTube or advertising integrations, nothing is ever published automatically, and no advertising money is spent.
 
-**Stack:** Next.js 16 (App Router, Cache Components) · TypeScript · Tailwind CSS 4 · shadcn/ui · PostgreSQL 17 (Docker) · Drizzle ORM · Zod · Anthropic TypeScript SDK · Vitest
+**Stack:** Next.js 16 (App Router, Cache Components) · TypeScript · Tailwind CSS 4 · shadcn/ui · PostgreSQL 17 (Docker) · Drizzle ORM · Zod · Anthropic TypeScript SDK · FFmpeg · Vitest
 
 ## Getting started
 
-Requires Node.js 22+ and Docker Desktop.
+Requires Node.js 22+ and Docker Desktop. The Shorts Studio also needs FFmpeg (free) for rendering
+and measuring videos; see [FFmpeg setup](#ffmpeg-setup).
 
 ```powershell
 npm install
 Copy-Item .env.example .env.local   # if .env.local doesn't exist yet
 npm run db:up                       # start Postgres on localhost:5440
-npm run db:migrate                  # apply migrations (includes Story Workshop and Production Studio tables)
+npm run db:migrate                  # apply migrations (includes Story Workshop, Production Studio and Shorts tables)
 npm run dev                         # http://localhost:3000
 ```
 
@@ -55,8 +56,11 @@ Production build: `npm run build` then `npm run start`.
 | Production Studio | Production plans from approved stories; scene editing and reordering; per-scene status; Higgsfield API generation with polling, retries and timeouts; manual generate-and-import workflow; asset review and final selection; progress and cost estimates; ready-for-assembly gate |
 | Characters | Reusable character library with consistent visual descriptions, reference images, approval for reuse, appearances across stories |
 | Asset library | All scene images and clips with preview, provider, model, date, duration, size, file location and review status; filters in the URL |
-| Settings | Load / remove sample data, workspace info, Higgsfield and media folder status |
-| Other modules | Placeholder pages describing the planned scope |
+| Shorts Studio | One Short per approved scene video; Claude standalone review, hook, narration/music/sound suggestions and metadata; 9:16 rendering with FFmpeg; captions; side-by-side source and final previews; quality control; approve / reject |
+| Publishing | Queue of approved, scheduled and published Shorts; manual scheduling; YouTube-ready metadata and upload checklist. Nothing is uploaded |
+| Analytics | Per-Short performance snapshots entered from YouTube Studio; which metrics exist where |
+| Settings | Load / remove sample data, workspace info, Higgsfield, FFmpeg and media folder status |
+| Other modules | Placeholder pages (Playlists, Advertising Budget) describing the planned scope |
 
 Each idea stores: title, description, category, target age range, source URL, originality review status, priority, workflow status, format, tags, notes, and YouTube compliance flags (`madeForKids`, `containsSyntheticMedia`).
 
@@ -287,6 +291,139 @@ design original characters, and descriptions are checked for franchise names.
 | `generation_jobs` | Every API or manual attempt: model, request, provider request id, estimate, status, error, timings |
 | `assets` | Scene images and clips, and character reference images |
 
+## Shorts Studio
+
+Each finished scene is published as its own YouTube Short instead of being combined into one long
+episode. The original scene clips are never changed: the vertical version is a new file.
+
+### Preparing Shorts
+
+1. **Import** (`/shorts` → *Import scenes*). Lists every scene whose final asset is an approved
+   video stored on disk, grouped by production plan. Each selected scene becomes one draft Short that
+   keeps references to its scene, plan, story and source asset, plus a snapshot of the scene title,
+   number and file path (so it survives if the scene is deleted). Scenes that already have a Short are
+   skipped. First-draft captions are built from the scene's dialogue.
+2. **Analyse with Claude** (per Short, or *Analyse N with Claude* for all). Claude reads the story and
+   the scene script (it can't watch the clip) and returns: whether the scene works on its own
+   (*strong*, *usable* or *weak*, with reasons), the beginning, middle and ending within the clip, how
+   strong the opening seconds are, an on-screen hook, narration suggestions, music and sound-effect
+   suggestions, title, description, hashtags, a playlist name and a children's-suitability review.
+   The prompt forbids suggesting new footage or asking viewers to like or subscribe. On the first
+   analysis the suggested metadata is filled in; later analyses keep your edits (use *Apply
+   suggestions* to replace them).
+3. **Suggest publishing order** (per plan). Claude orders the plan's Shorts, leading with strong
+   standalone scenes and keeping dependent scenes in story order. Each position gets a reason and can
+   be edited on the Short.
+4. **Frame and caption** (`/shorts/[id]`). The source clip and the final 9:16 version sit side by
+   side. Before rendering, the final side is a live browser simulation that uses the same framing maths
+   as FFmpeg and shows the captions and hook at the current playback time.
+   - *Zoom 1×* (default) keeps the **whole original frame**, centred on a blurred, dimmed copy of the
+     same picture, so no character or action can be cropped and no footage is invented. Zooming in
+     crops around a focus point; the page and the quality check say how much of the picture is lost
+     and warn when the source is enlarged more than 1.5×.
+   - Captions are edited as `start-end | text` lines. Their first timing is estimated from word counts,
+     because the generated voice isn't transcribed, so play the preview, fix the times and tick
+     *Captions match the audio*. Captions can be burned in, and are always downloadable as `.srt`.
+   - The hook is shown at the top for the first seconds (default 2.5 s).
+   - *Normalise loudness* applies FFmpeg's `loudnorm` filter, targeting about -14 LUFS.
+5. **Render 9:16** writes `MEDIA_DIR/shorts/<short id>/<random>.mp4` (1080×1920, H.264, AAC 48 kHz,
+   `+faststart`). Every render is a new file. The output is then measured with `ffprobe` and FFmpeg's
+   `ebur128` loudness filter. Changing settings, captions, hook or source marks the render out of date.
+6. **Approve the metadata** (title up to 100 characters, description, hashtags, playlist, hook), then
+   **approve the Short**. Approval needs a current render, approved metadata and no failed quality
+   check, and you confirm that you watched the rendered version with sound. Editing an approved or
+   scheduled Short sends it back to draft. *Reject* keeps the Short with your reason; it never enters
+   the queue.
+
+Scenes are never extended and no footage is generated here. If a scene is weak on its own, you can
+improve the hook and title, publish it later, or reject it.
+
+If a scene's final clip is replaced in the Production Studio later, the Short shows a banner with
+*Use the current clip*.
+
+### Quality control
+
+Worked out on every page load from stored measurements (nothing is stored as "passed"):
+
+| Check | Pass / warn / fail |
+| --- | --- |
+| Vertical render | Fails until rendered or when out of date; *not available* without FFmpeg |
+| Duration | Pass up to 60 s · warn 60–180 s or under 5 s · fail over 180 s (the Shorts limit) |
+| Vertical 9:16 | Output must be exactly 9:16 |
+| Resolution | Pass 1080×1920 · warn 720×1280, or a source enlarged over 1.5× · fail below 720p |
+| Characters and action in frame | Warns whenever part of the picture is cropped, with the percentage |
+| Audio | Fails without an audio track or when silent · warns below -24 or above -9 LUFS, or a true peak above -0.5 dBFS |
+| Caption sync | Fails on overlaps or captions past the end · warns on very short or fast (> 15 characters/s) captions, missing captions for dialogue, or timing you haven't checked yet |
+| Opening seconds | From Claude's review; warns when the opening is weak |
+| Standalone storytelling | Warns for *weak* scenes or no clear beginning, middle and ending, with Claude's reasons |
+| Children's suitability | Fails when Claude raises a concern. Advisory: your own review is the real check |
+| Metadata | Fails on calls to like, subscribe, comment or buy, franchise names, an empty title or over 60 hashtags · warns on over 15 hashtags or unapproved metadata |
+
+Claude reviews the script, and the generated clip may differ from it. The audio check can't detect
+garbled lines or the wrong character speaking, so listening is part of approval.
+
+### Publishing queue (`/publishing`)
+
+Approved, scheduled and published Shorts, with counts per status. Statuses: Draft → Approved →
+Scheduled → Published (plus Rejected).
+
+- **Schedule** records a future time (in your local time zone). It doesn't upload anything; set the
+  same time in YouTube Studio.
+- **YouTube metadata** shows the title, the description with hashtags appended, tags (capped at
+  YouTube's 500 characters), a settings checklist (made for kids, altered or synthetic content,
+  visibility, playlist, captions, category), download links for the vertical `.mp4` and the `.srt`,
+  and the equivalent YouTube Data API `videos.insert` body (`privacyStatus: private` plus `publishAt`
+  for scheduled uploads, `selfDeclaredMadeForKids`, `containsSyntheticMedia`). *Made for kids* and
+  *synthetic media* come from the linked idea, defaulting to yes.
+- **Mark published** (optionally with the YouTube link) once it is live. Published Shorts are locked
+  until you undo this.
+
+### Analytics (`/analytics`)
+
+One row per Short with the latest snapshot of views, average view duration, viewed vs swiped away,
+audience retention (average % viewed), likes, subscribers gained and traffic sources. Numbers are
+entered by hand from YouTube Studio (*Add numbers*) as dated snapshots, and earlier snapshots are kept
+as history. Empty cells say why they're empty (*not published* or *not entered*), so nothing shows as
+zero unless you typed zero.
+
+The page also lists where each metric is in YouTube Studio and whether the YouTube Analytics API
+offers it, for a later automatic import. All of them are in the API except *viewed vs swiped away*,
+which is only in Studio.
+
+### FFmpeg setup
+
+FFmpeg is free and runs locally; no paid service is involved.
+
+```powershell
+winget install Gyan.FFmpeg      # or download a build from https://ffmpeg.org/download.html
+```
+
+Restart the terminal and `npm run dev`. If `ffmpeg` and `ffprobe` aren't on `PATH`, set their full
+paths in `.env.local`:
+
+```dotenv
+FFMPEG_PATH=C:/tools/ffmpeg/bin/ffmpeg.exe
+FFPROBE_PATH=C:/tools/ffmpeg/bin/ffprobe.exe
+```
+
+Settings and the Shorts Studio show whether FFmpeg was found. Without it you can still import,
+analyse, edit captions and metadata and use the live preview, but you can't render, measure or approve.
+
+FFmpeg is called with an argument list (no shell). Burned-in captions and the hook go into an ASS
+subtitle file in a temporary folder. The output is always a new file under `shorts/`, and the renderer
+refuses to write to the source path.
+
+### Shorts data
+
+| Table | Contents |
+| --- | --- |
+| `shorts` | One per scene (unique): scene, plan, story and source-asset references plus a snapshot, status, metadata, hook, publish order and reason, captions, video settings, Claude analysis, source and output measurements, render file and key, review notes, schedule, publish date and YouTube link |
+| `short_generations` | Every Claude call for Shorts (analysis or publishing order): model, tokens, duration, error |
+| `short_metrics` | Dated performance snapshots entered by hand |
+
+Deleting a Short removes its analysis log and metrics but no files. Deleting a scene, plan, story or
+asset keeps the Short.
+
 ## Scripts
 
 | Script | What it does |
@@ -313,6 +450,8 @@ src/
   components/stories/    story brief form, workspace, editor, approval, history, usage
   components/production/ plan and scene UI, generation panel, job list, asset cards, import dialog
   components/characters/ character form and actions
+  components/shorts/     Shorts workbench (previews, framing, captions), metadata and review,
+                         import, publishing queue and metrics forms
   db/                    Drizzle schema and client
   lib/ideas.ts           shared enums, labels, Zod validation, filter parsing
   lib/stories.ts         story enums, brief and story-content Zod schemas, editor helpers
@@ -320,14 +459,17 @@ src/
   lib/production.ts      production enums, scene status, progress, costs, prompts, safety checks
   lib/higgsfield.ts      documented Higgsfield models and request bodies
   lib/generation-jobs.ts provider status → job update (completion, failure, timeout)
+  lib/shorts.ts          Shorts statuses, captions, metadata, YouTube body, Claude schemas, metrics
+  lib/short-video.ts     9:16 framing, FFmpeg arguments, ASS captions, ffprobe/loudness parsing
+  lib/short-qc.ts        Shorts quality control and approval rules
   lib/navigation.ts      module registry (sidebar + placeholder pages)
   lib/sample-ideas.ts    demo data
   server/actions/        server actions (mutations)
   server/queries/        read queries
-  server/ai/             Claude client, story generation and prompt (server-only)
+  server/ai/             Claude client, story generation and prompt, Shorts prompts (server-only)
   server/providers/      Higgsfield API client (server-only)
   server/production/     job submission, polling, asset records, scene status sync
-  server/media/          local media storage
+  server/media/          local media storage, FFmpeg runner
   test/                  test fixtures
 drizzle/                 generated SQL migrations (commit these)
 ```
@@ -343,13 +485,19 @@ drizzle/                 generated SQL migrations (commit these)
 - **Tests** cover validation, prompt building, cost estimates, error mapping and the generation
   flow with a mocked Claude client; scene status, progress, costs, safety checks, story import,
   Higgsfield request bodies, the Higgsfield client (auth, idempotent retries, errors, uploads,
-  estimates) with a fake `fetch`, job status interpretation and media storage. They never call a
-  real API.
+  estimates) with a fake `fetch`, job status interpretation and media storage; and for Shorts:
+  caption building, parsing and SRT, metadata checks, the YouTube upload body, publishing order,
+  9:16 framing, the FFmpeg command and subtitle file, ffprobe and loudness parsing, quality control
+  and the Claude prompts. They never call a real API or run FFmpeg.
 - **Higgsfield polling** only runs while a plan or scene page is open. Close the tab and jobs
   finish on Higgsfield's side; reopen the page (or press *Check now*) to collect them within the
   7-day retention window.
-- **No final video assembly yet.** "Ready for assembly" is a reviewed checkpoint; editing,
-  voice-over and rendering are later milestones.
+- **No long-form episode assembly yet.** Scenes are published as separate Shorts for now; combining
+  them into one episode is a later milestone.
+- **No audio mixing.** Music and sound effects are suggestions; add them in an editor or YouTube
+  Studio. Narration suggestions need a new recording or clip.
+- **Rendering runs inside a server action** and takes roughly as long as the clip on a typical PC.
+- **Caption timing is estimated** from the script, not transcribed from the audio.
 - **Long requests.** Generation runs inside a server action and can take a few minutes. That's
   fine locally; a serverless host would need a longer function timeout.
 - **Dark theme only.** The app forces dark mode, and the light tokens in `globals.css` are shadcn defaults.

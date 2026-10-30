@@ -8,6 +8,7 @@ import {
   pgEnum,
   pgTable,
   primaryKey,
+  real,
   text,
   timestamp,
   uniqueIndex,
@@ -32,6 +33,8 @@ import {
   PLAN_STATUSES,
   SCENE_STATUSES,
 } from "../lib/production";
+import type { AudioLevels, MediaProbe } from "../lib/short-video";
+import { type CaptionCue, SHORT_STATUSES, type ShortAnalysis, type TrafficSource, type VideoSettings } from "../lib/shorts";
 import { REVISION_SOURCES, STORY_STATUSES, type StoryContent, type StoryScene } from "../lib/stories";
 
 export const ideaStatus = pgEnum("idea_status", IDEA_STATUSES);
@@ -334,3 +337,106 @@ export type ProductionPlan = typeof productionPlans.$inferSelect;
 export type ProductionScene = typeof productionScenes.$inferSelect;
 export type GenerationJob = typeof generationJobs.$inferSelect;
 export type Asset = typeof assets.$inferSelect;
+
+// ---------- Shorts Studio ----------
+
+export const shortStatus = pgEnum("short_status", SHORT_STATUSES);
+
+// One vertical Short per production scene. The source clip is referenced, never modified: the
+// 9:16 version is a new file under MEDIA_DIR/shorts/<short id>/.
+export const shorts = pgTable(
+  "shorts",
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    // Kept (set to null) when the scene, plan, story or asset is deleted; the snapshot below remains.
+    sceneId: uuid().references(() => productionScenes.id, { onDelete: "set null" }),
+    planId: uuid().references(() => productionPlans.id, { onDelete: "set null" }),
+    storyId: uuid().references(() => stories.id, { onDelete: "set null" }),
+    sourceAssetId: uuid().references(() => assets.id, { onDelete: "set null" }),
+    sceneTitle: text().notNull(),
+    sceneNumber: integer().notNull(),
+    sourceFilePath: text(),
+    sourceProbe: jsonb().$type<MediaProbe>(),
+    status: shortStatus().notNull().default("draft"),
+    title: text().notNull(),
+    description: text().notNull().default(""),
+    hashtags: text().array().notNull().default([]),
+    playlist: text().notNull().default(""),
+    hook: text().notNull().default(""),
+    hookSeconds: real().notNull().default(2.5),
+    publishOrder: integer(),
+    publishOrderReason: text(),
+    metadataApprovedAt: timestamp({ withTimezone: true }),
+    captions: jsonb().$type<CaptionCue[]>().notNull().default([]),
+    captionsReviewed: boolean().notNull().default(false),
+    videoSettings: jsonb().$type<VideoSettings>().notNull(),
+    analysis: jsonb().$type<ShortAnalysis>(),
+    analyzedAt: timestamp({ withTimezone: true }),
+    renderFilePath: text(),
+    renderKey: text(),
+    renderedAt: timestamp({ withTimezone: true }),
+    renderError: text(),
+    outputProbe: jsonb().$type<MediaProbe>(),
+    outputAudio: jsonb().$type<AudioLevels>(),
+    reviewNotes: text(),
+    reviewedAt: timestamp({ withTimezone: true }),
+    scheduledAt: timestamp({ withTimezone: true }),
+    publishedAt: timestamp({ withTimezone: true }),
+    youtubeUrl: text(),
+    notes: text().notNull().default(""),
+    createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp({ withTimezone: true })
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+  (t) => [uniqueIndex().on(t.sceneId), index().on(t.status), index().on(t.planId)],
+);
+
+// Every Claude call made for Shorts (analysis of one Short, or publishing order for a set).
+export const shortGenerations = pgTable(
+  "short_generations",
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    shortId: uuid().references(() => shorts.id, { onDelete: "cascade" }),
+    planId: uuid().references(() => productionPlans.id, { onDelete: "set null" }),
+    kind: text().notNull(),
+    ok: boolean().notNull(),
+    model: text().notNull(),
+    inputTokens: integer(),
+    outputTokens: integer(),
+    cacheReadTokens: integer(),
+    cacheWriteTokens: integer(),
+    durationMs: integer().notNull(),
+    error: text(),
+    createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index().on(t.shortId)],
+);
+
+// Performance snapshots, entered by hand from YouTube Studio until an analytics integration
+// exists. Null means "not entered", never zero.
+export const shortMetrics = pgTable(
+  "short_metrics",
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    shortId: uuid()
+      .notNull()
+      .references(() => shorts.id, { onDelete: "cascade" }),
+    capturedAt: timestamp({ withTimezone: true }).notNull(),
+    source: text().notNull().default("manual"),
+    views: integer(),
+    averageViewDurationSeconds: real(),
+    viewedPercent: real(),
+    averagePercentageViewed: real(),
+    likes: integer(),
+    subscribersGained: integer(),
+    trafficSources: jsonb().$type<Partial<Record<TrafficSource, number>>>(),
+    notes: text().notNull().default(""),
+    createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index().on(t.shortId, t.capturedAt)],
+);
+
+export type Short = typeof shorts.$inferSelect;
+export type ShortMetric = typeof shortMetrics.$inferSelect;

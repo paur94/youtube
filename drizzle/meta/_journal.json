@@ -36,6 +36,13 @@
       "when": 1793281257057,
       "tag": "0004_hedra_source",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1793355254371,
+      "tag": "0005_shorts_studio",
+      "breakpoints": true
     }
   ]
 }

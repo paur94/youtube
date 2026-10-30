@@ -9,6 +9,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { SAMPLE_IDEAS } from "@/lib/sample-ideas";
 import { MODULES } from "@/lib/navigation";
 import { getClaudeConfig } from "@/server/ai/claude";
+import { getFfmpegVersion } from "@/server/media/ffmpeg";
 import { getMediaRoot } from "@/server/media/storage";
 import { getHedraConfig } from "@/server/providers/hedra";
 import { getHiggsfieldConfig } from "@/server/providers/higgsfield";
@@ -104,6 +105,7 @@ async function ClaudeStatus() {
 async function ProductionStatus() {
   await connection();
   const higgsfield = getHiggsfieldConfig();
+  const ffmpeg = await getFfmpegVersion();
   return (
     <>
       <Row
@@ -115,6 +117,7 @@ async function ProductionStatus() {
         value={getHedraConfig().configured ? "Configured" : "Not configured (set HEDRA_API_KEY)"}
       />
       <Row label="Media folder" value={getMediaRoot()} />
+      <Row label="FFmpeg (Shorts rendering)" value={ffmpeg ? `Found · ${ffmpeg}` : "Not found (install FFmpeg or set FFMPEG_PATH)"} />
     </>
   );
 }
