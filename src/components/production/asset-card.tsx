@@ -68,7 +68,7 @@ export function AssetCard({ asset, isFinal, showSelect = true }: { asset: AssetI
       <AssetPreview kind={asset.kind} filePath={asset.filePath} sourceUrl={asset.sourceUrl} />
       <div className="flex flex-wrap items-center gap-1.5">
         <AssetStatusBadge status={asset.status} />
-        <ModeBadge mode={asset.source === "higgsfield_api" ? "api" : "manual"} />
+        <ModeBadge mode={asset.source === "manual_import" ? "manual" : "api"} />
         <Badge variant="outline">r{asset.revision}</Badge>
         {isFinal && (
           <Badge className="bg-primary text-primary-foreground">

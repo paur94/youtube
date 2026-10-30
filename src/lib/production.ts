@@ -18,7 +18,7 @@ export const JOB_STATUSES = [
 ] as const;
 export const ASSET_KINDS = ["image", "video"] as const;
 export const ASSET_STATUSES = ["pending_review", "approved", "rejected"] as const;
-export const ASSET_SOURCES = ["higgsfield_api", "manual_import"] as const;
+export const ASSET_SOURCES = ["higgsfield_api", "manual_import", "hedra_api"] as const;
 export const CHARACTER_STATUSES = ["draft", "approved", "archived"] as const;
 
 export type PlanStatus = (typeof PLAN_STATUSES)[number];
@@ -64,6 +64,7 @@ export const ASSET_STATUS_LABELS: Record<AssetStatus, string> = {
 
 export const ASSET_SOURCE_LABELS: Record<AssetSource, string> = {
   higgsfield_api: "Higgsfield API",
+  hedra_api: "Hedra API",
   manual_import: "Manual import",
 };
 

@@ -216,7 +216,9 @@ async function PlanData({ params }: Pick<PageProps<"/production/[id]">, "params"
               )}
               {costs.unpricedJobs > 0 && (
                 <p className="text-xs text-muted-foreground">
-                  {costs.unpricedJobs} API {costs.unpricedJobs === 1 ? "job has" : "jobs have"} no estimate.
+                  {costs.unpricedJobs} API {costs.unpricedJobs === 1 ? "job isn't" : "jobs aren't"} included: Higgsfield
+                  gives no up-front estimate for some models (e.g. Wan), so the real total is higher. Check your
+                  Higgsfield billing page for exact charges.
                 </p>
               )}
               {costs.manualJobs > 0 && (

@@ -17,6 +17,7 @@ import {
   storyCharacters,
   storyRevisions,
 } from "@/db/schema";
+import { HEDRA_PROVIDER } from "@/lib/hedra";
 import { DEFAULT_IMAGE_MODEL, DEFAULT_VIDEO_MODEL, getHiggsfieldModel } from "@/lib/higgsfield";
 import {
   ASPECT_RATIOS,
@@ -464,6 +465,7 @@ export async function cancelJob(jobId: string): Promise<ActionResult> {
     const [job] = await db.select().from(generationJobs).where(eq(generationJobs.id, id.data));
     if (!job) return { ok: false, message: "Job not found" };
     if (job.mode === "api") {
+      if (job.provider === HEDRA_PROVIDER) return { ok: false, message: "Hedra jobs can't be canceled from here" };
       if (job.status !== "queued" || !job.externalRequestId) {
         return { ok: false, message: "Only queued requests can be canceled" };
       }

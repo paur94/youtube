@@ -10,6 +10,7 @@ import { SAMPLE_IDEAS } from "@/lib/sample-ideas";
 import { MODULES } from "@/lib/navigation";
 import { getClaudeConfig } from "@/server/ai/claude";
 import { getMediaRoot } from "@/server/media/storage";
+import { getHedraConfig } from "@/server/providers/hedra";
 import { getHiggsfieldConfig } from "@/server/providers/higgsfield";
 import { getSampleIdeaCount } from "@/server/queries/ideas";
 
@@ -108,6 +109,10 @@ async function ProductionStatus() {
       <Row
         label="Higgsfield API"
         value={higgsfield.configured ? "Configured" : "Not configured (manual workflow)"}
+      />
+      <Row
+        label="Hedra API (Character 3)"
+        value={getHedraConfig().configured ? "Configured" : "Not configured (set HEDRA_API_KEY)"}
       />
       <Row label="Media folder" value={getMediaRoot()} />
     </>

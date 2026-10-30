@@ -21,7 +21,7 @@ export function Field({
   children: React.ReactNode;
 }) {
   return (
-    <div className="grid gap-1.5">
+    <div className="grid content-start gap-1.5">
       <Label htmlFor={id}>
         {label}
         {hint && <span className="font-normal text-muted-foreground">· {hint}</span>}
@@ -46,7 +46,7 @@ export function SelectField({
   options: [string, string][];
 }) {
   return (
-    <div className="grid gap-1.5">
+    <div className="grid content-start gap-1.5">
       <Label htmlFor={id}>{label}</Label>
       <Select name={name} defaultValue={defaultValue}>
         <SelectTrigger id={id} className="w-full">

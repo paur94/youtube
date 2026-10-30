@@ -44,6 +44,16 @@ export async function saveMedia(bytes: Uint8Array, contentType: string, folder: 
   return { filePath: relative, kind: type.kind, contentType: normalizeContentType(contentType), sizeBytes: bytes.byteLength };
 }
 
+/** Stores a provider input that isn't an asset (e.g. Hedra driving audio); the caller validates it. */
+export async function saveInputFile(bytes: Uint8Array, ext: string, folder: string) {
+  const relative = `${folder}/${randomUUID()}.${ext}`;
+  const full = resolveMediaPath(relative);
+  if (!full) throw new MediaError("Invalid storage path");
+  await mkdir(path.dirname(full), { recursive: true });
+  await writeFile(full, bytes);
+  return relative;
+}
+
 /** Downloads a remote file (https only) into the media folder. */
 export async function downloadMedia(url: string, folder: string, fetchImpl: typeof fetch = fetch) {
   let parsed: URL;

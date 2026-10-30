@@ -33,6 +33,10 @@ const SEEDANCE_BODY = { resolution: "1080p", generate_audio: false };
 // 720p with native sound: about $0.51 per 10s, far cheaper than Seedance 2.5 at 1080p (~$11 per 10s).
 const PIXVERSE_BODY = { resolution: "720p", generate_audio: true };
 
+// Wan 3.0 defaults to 1080p; 720p keeps test runs cheap. Native sound, so the prompt carries the dialogue.
+const WAN_ASPECT_RATIOS = ["16:9", "4:3", "1:1", "3:4", "9:16"];
+const WAN_BODY = { resolution: "720p", generate_audio: true };
+
 export const HIGGSFIELD_MODELS: readonly HiggsfieldModel[] = [
   {
     id: "soul-standard",
@@ -73,6 +77,40 @@ export const HIGGSFIELD_MODELS: readonly HiggsfieldModel[] = [
     durationRange: [1, 15],
     supportsNegativePrompt: true,
     fixedBody: PIXVERSE_BODY,
+  },
+  {
+    id: "wan-3.0-i2v",
+    label: "Wan 3.0 (image to video, 720p, sound, ~$1 per 10s)",
+    path: "/alibaba/wan-3.0/image-to-video",
+    output: "video",
+    input: "image",
+    durationRange: [2, 30],
+    aspectRatios: WAN_ASPECT_RATIOS,
+    supportsNegativePrompt: false,
+    fixedBody: WAN_BODY,
+  },
+  {
+    id: "wan-3.0-r2v",
+    label: "Wan 3.0 (character references to video, 720p, sound, ~$1 per 10s + refs)",
+    path: "/alibaba/wan-3.0/reference-to-video",
+    output: "video",
+    input: "text",
+    durationRange: [2, 30],
+    aspectRatios: WAN_ASPECT_RATIOS,
+    supportsNegativePrompt: false,
+    maxReferenceImages: 10,
+    fixedBody: WAN_BODY,
+  },
+  {
+    id: "wan-3.0-t2v",
+    label: "Wan 3.0 (text to video, 720p, sound, ~$1 per 10s)",
+    path: "/alibaba/wan-3.0/text-to-video",
+    output: "video",
+    input: "text",
+    durationRange: [2, 30],
+    aspectRatios: WAN_ASPECT_RATIOS,
+    supportsNegativePrompt: false,
+    fixedBody: WAN_BODY,
   },
   {
     id: "seedance-2.5-i2v",
@@ -143,7 +181,7 @@ export const HIGGSFIELD_MODELS: readonly HiggsfieldModel[] = [
 ];
 
 export const DEFAULT_IMAGE_MODEL = "grok-image-2";
-export const DEFAULT_VIDEO_MODEL = "pixverse-v6-i2v";
+export const DEFAULT_VIDEO_MODEL = "wan-3.0-i2v";
 
 export const HIGGSFIELD_WEB_URL = "https://higgsfield.ai";
 

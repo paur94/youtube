@@ -24,6 +24,7 @@ import type { AssetKind } from "@/lib/production";
 import { generateScene, startManualJob } from "@/server/actions/production";
 
 import { CopyButton } from "./copy-button";
+import { HedraPanel } from "./hedra-panel";
 import { ImportAssetDialog } from "./import-asset-dialog";
 import { useAction } from "./use-action";
 
@@ -37,6 +38,7 @@ export function GenerationPanel({
   durationSeconds,
   defaults,
   apiConfigured,
+  hedraConfigured,
   prompt,
   negativePrompt,
   concerns,
@@ -48,6 +50,7 @@ export function GenerationPanel({
   durationSeconds: number;
   defaults: { imageModel: string; videoModel: string };
   apiConfigured: boolean;
+  hedraConfigured: boolean;
   /** Full prompt including character descriptions and style. */
   prompt: string;
   negativePrompt: string;
@@ -206,6 +209,8 @@ export function GenerationPanel({
           </>
         )}
       </section>
+
+      <HedraPanel sceneId={sceneId} configured={hedraConfigured} startImages={startImages} blocked={blocked} />
 
       {/* Manual */}
       <section className="grid gap-3 rounded-lg border border-amber-500/30 p-4">

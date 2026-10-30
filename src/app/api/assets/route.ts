@@ -6,6 +6,7 @@ import { db } from "@/db";
 import { characters, productionScenes } from "@/db/schema";
 import { MediaError, saveMedia } from "@/server/media/storage";
 import { addAsset } from "@/server/production/service";
+import { sameOrigin } from "@/server/same-origin";
 
 // File uploads go through a route handler because server actions cap request bodies at 1 MB.
 // No auth yet: like the server actions, this only accepts same-origin requests and the app
@@ -26,17 +27,6 @@ const fieldsSchema = z
 
 function json(ok: boolean, message: string, status = ok ? 200 : 400) {
   return Response.json({ ok, message }, { status });
-}
-
-function sameOrigin(request: Request) {
-  const origin = request.headers.get("origin");
-  const host = request.headers.get("x-forwarded-host") ?? request.headers.get("host");
-  if (!origin || !host) return false;
-  try {
-    return new URL(origin).host === host;
-  } catch {
-    return false;
-  }
 }
 
 export async function POST(request: Request) {

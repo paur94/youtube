@@ -19,6 +19,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Skeleton } from "@/components/ui/skeleton";
 import { MODULES } from "@/lib/navigation";
 import { buildGenerationPrompt, findPromptConcerns, POLLABLE_JOB_STATUSES } from "@/lib/production";
+import { getHedraConfig } from "@/server/providers/hedra";
 import { getHiggsfieldConfig } from "@/server/providers/higgsfield";
 import { getCharacterOptions, getScene } from "@/server/queries/production";
 
@@ -166,6 +167,7 @@ async function SceneData({ params }: Pick<Props, "params">) {
                 defaults={{ imageModel: plan.imageModel, videoModel: plan.videoModel }}
                 characterReferences={characterReferences}
                 apiConfigured={higgsfield.configured}
+                hedraConfigured={getHedraConfig().configured}
                 prompt={prompt}
                 negativePrompt={scene.negativePrompt}
                 concerns={concerns}

@@ -52,7 +52,7 @@ export function JobList({ jobs }: { jobs: JobItem[] }) {
             <p className="text-xs text-muted-foreground">
               {job.createdAt}
               {job.mode === "api" &&
-                (usd !== null && Number.isFinite(usd) ? ` · est. ${formatUsd(usd)}` : " · no price estimate")}
+                (usd !== null && Number.isFinite(usd) ? ` · est. ${formatUsd(usd)}` : " · cost unknown (Higgsfield gave no estimate, see its billing page)")}
               {job.externalRequestId && ` · request ${job.externalRequestId.slice(0, 8)}`}
             </p>
             {job.error && <p className="text-xs text-rose-300">{job.error}</p>}

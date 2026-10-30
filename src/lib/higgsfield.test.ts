@@ -81,6 +81,24 @@ describe("buildRequestBody", () => {
     expect(buildRequestBody(model("seedance-2.5-t2v"), { ...params, durationSeconds: 45 }).duration).toBe(30);
   });
 
+  it("builds Wan 3.0 requests at 720p with sound and the documented fields only", () => {
+    const i2v = buildRequestBody(model("wan-3.0-i2v"), { ...params, durationSeconds: 40, imageUrl: "https://x/a.png" });
+    expect(i2v).toEqual({
+      prompt: "A duckling",
+      image_url: "https://x/a.png",
+      resolution: "720p",
+      generate_audio: true,
+      aspect_ratio: "16:9",
+      duration: 30,
+    });
+    const refs = Array.from({ length: 12 }, (_, i) => `https://x/${i}.png`);
+    const r2v = buildRequestBody(model("wan-3.0-r2v"), { ...params, aspectRatio: "9:16", referenceUrls: refs });
+    expect(r2v).toMatchObject({ aspect_ratio: "9:16", duration: 7, image_urls: refs.slice(0, 10) });
+    expect(r2v).not.toHaveProperty("image_url");
+    expect(r2v).not.toHaveProperty("negative_prompt");
+    expect(buildRequestBody(model("wan-3.0-t2v"), { ...params, durationSeconds: 1 }).duration).toBe(2);
+  });
+
   it("requires a start image for image-to-video", () => {
     expect(() => buildRequestBody(model("hailuo-2.3-standard-i2v"), params)).toThrow(/start image/);
   });

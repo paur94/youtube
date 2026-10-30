@@ -1,6 +1,6 @@
 import { JOB_TIMEOUT_MS, type AssetKind, type JobStatus } from "./production";
 
-// Shape of a Higgsfield status response, as far as job tracking needs it.
+// Shape of a Higgsfield status response, as far as job tracking needs it. Hedra jobs are mapped onto it.
 export type RemoteStatus = {
   status: "queued" | "in_progress" | "completed" | "failed" | "nsfw" | "canceled";
   error?: string | null;
@@ -23,6 +23,7 @@ export function interpretRemoteStatus(
   job: { submittedAt: Date | null; outputKind: AssetKind },
   now = new Date(),
   timeoutMs = JOB_TIMEOUT_MS,
+  provider = "Higgsfield",
 ): JobUpdate {
   const expires = remote.expires_at ? new Date(remote.expires_at) : null;
   const outputExpiresAt = expires && !Number.isNaN(expires.getTime()) ? expires : null;
@@ -35,17 +36,17 @@ export function interpretRemoteStatus(
         ...(remote.video ? [{ url: remote.video.url, kind: "video" as const }] : []),
       ];
       if (outputs.length === 0) {
-        return { ...base, status: "failed", error: "Higgsfield reported completion but returned no files." };
+        return { ...base, status: "failed", error: `${provider} reported completion but returned no files.` };
       }
       return { ...base, status: "completed", outputs };
     }
     case "failed":
-      return { ...base, status: "failed", error: remote.error || "Higgsfield reported that the generation failed." };
+      return { ...base, status: "failed", error: remote.error || `${provider} reported that the generation failed.` };
     case "nsfw":
       return {
         ...base,
         status: "nsfw",
-        error: "Higgsfield's content moderation rejected the input or output. Revise the prompt. You are not charged.",
+        error: `${provider}'s content moderation rejected the input or output. Revise the prompt or inputs.${provider === "Higgsfield" ? " You are not charged." : ""}`,
       };
     case "canceled":
       return { ...base, status: "canceled", error: "The request was canceled before it started." };
