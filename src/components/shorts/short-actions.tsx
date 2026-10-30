@@ -71,6 +71,15 @@ export function MetadataForm({
   const [description, setDescription] = useState(values.description);
   const [hashtags, setHashtags] = useState(values.hashtags.join(" "));
   const [hook, setHook] = useState(values.hook);
+  // Server-side changes (e.g. "Apply suggestions") bump formKey; resync the controlled fields to the fresh values.
+  const [syncedKey, setSyncedKey] = useState(formKey);
+  if (syncedKey !== formKey) {
+    setSyncedKey(formKey);
+    setTitle(values.title);
+    setDescription(values.description);
+    setHashtags(values.hashtags.join(" "));
+    setHook(values.hook);
+  }
   const [approving, runApproval] = useAction();
   const id = useId();
   const errors = state && !state.ok ? state.errors : undefined;
