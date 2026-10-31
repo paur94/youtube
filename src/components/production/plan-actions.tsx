@@ -5,6 +5,7 @@ import {
   ArrowUpIcon,
   CheckCircle2Icon,
   ClapperboardIcon,
+  Loader2Icon,
   PlusIcon,
   Trash2Icon,
 } from "lucide-react";
@@ -69,7 +70,7 @@ export function NewPlanButton({ stories }: { stories: StoryChoice[] }) {
         <PlusIcon />
         New production plan
       </Button>
-      <Dialog open={open} onOpenChange={setOpen}>
+      <Dialog open={open} onOpenChange={(next) => !pending && setOpen(next)}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Start production</DialogTitle>
@@ -94,11 +95,11 @@ export function NewPlanButton({ stories }: { stories: StoryChoice[] }) {
             </Select>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setOpen(false)}>
+            <Button variant="outline" disabled={pending} onClick={() => setOpen(false)}>
               Cancel
             </Button>
             <Button disabled={!storyId || pending} onClick={() => run(() => createProductionPlan(storyId))}>
-              <ClapperboardIcon />
+              {pending ? <Loader2Icon className="animate-spin" /> : <ClapperboardIcon />}
               {pending ? "Importing…" : "Create plan"}
             </Button>
           </DialogFooter>
@@ -226,11 +227,11 @@ export function PlanSettings({
   const dirty = JSON.stringify(values) !== JSON.stringify(settings);
 
   const select = (key: "aspectRatio" | "imageModel" | "videoModel", label: string, options: [string, string][]) => (
-    <div className="grid gap-1.5">
+    <div className="grid min-w-0 gap-1.5">
       <Label htmlFor={`${id}-${key}`}>{label}</Label>
       <Select value={values[key]} onValueChange={(v) => setValues({ ...values, [key]: v })}>
-        <SelectTrigger id={`${id}-${key}`} className="w-full">
-          <SelectValue />
+        <SelectTrigger id={`${id}-${key}`} className="w-full min-w-0">
+          <SelectValue className="truncate" />
         </SelectTrigger>
         <SelectContent>
           {options.map(([value, text]) => (
@@ -244,7 +245,7 @@ export function PlanSettings({
   );
 
   return (
-    <div className="grid gap-3">
+    <div className="grid min-w-0 gap-3">
       {select("aspectRatio", "Aspect ratio", ASPECT_RATIOS.map((r) => [r, r]))}
       {select(
         "imageModel",
@@ -256,7 +257,7 @@ export function PlanSettings({
         "Default video model",
         HIGGSFIELD_MODELS.filter((m) => m.output === "video").map((m) => [m.id, m.label]),
       )}
-      <div className="grid gap-1.5">
+      <div className="grid min-w-0 gap-1.5">
         <Label htmlFor={`${id}-style`}>Visual style</Label>
         <Input
           id={`${id}-style`}
