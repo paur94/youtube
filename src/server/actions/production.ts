@@ -123,6 +123,7 @@ export async function createProductionPlan(storyId: string): Promise<ActionResul
             durationSeconds: draft.durationSeconds,
             visualPrompt: draft.visualPrompt,
             negativePrompt: draft.negativePrompt,
+            notes: draft.notes,
             unmatchedCharacters: draft.characterNames.filter((n) => !byName.has(normalizeName(n))),
             status: draft.visualPrompt.trim() ? "ready" : "draft",
           })

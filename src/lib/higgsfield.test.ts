@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { buildRequestBody, getHiggsfieldModel, HIGGSFIELD_MODELS, outputDuration, pickDuration } from "./higgsfield";
+import { buildRequestBody, generatesAudio, getHiggsfieldModel, HIGGSFIELD_MODELS, outputDuration, pickDuration } from "./higgsfield";
 
 const params = { prompt: "A duckling", negativePrompt: "text", aspectRatio: "16:9" as const, durationSeconds: 7 };
 
@@ -97,6 +97,28 @@ describe("buildRequestBody", () => {
     expect(r2v).not.toHaveProperty("image_url");
     expect(r2v).not.toHaveProperty("negative_prompt");
     expect(buildRequestBody(model("wan-3.0-t2v"), { ...params, durationSeconds: 1 }).duration).toBe(2);
+  });
+
+  it("builds Seedance 2.5 720p requests with sound", () => {
+    const i2v = buildRequestBody(model("seedance-2.5-720p-i2v"), { ...params, imageUrl: "https://x/a.png" });
+    expect(i2v).toEqual({
+      prompt: "A duckling",
+      image_url: "https://x/a.png",
+      resolution: "720p",
+      generate_audio: true,
+      duration: 7,
+    });
+    expect(generatesAudio(model("seedance-2.5-720p-i2v"))).toBe(true);
+    const t2v = buildRequestBody(model("seedance-2.5-720p-t2v"), { ...params, aspectRatio: "9:16" });
+    expect(t2v).toEqual({ prompt: "A duckling", resolution: "720p", generate_audio: true, aspect_ratio: "9:16", duration: 7 });
+  });
+
+  it("builds Kling 3.0 Standard requests with sound and a 3–15s duration", () => {
+    const i2v = buildRequestBody(model("kling-3.0-std-i2v"), { ...params, durationSeconds: 20, imageUrl: "https://x/a.png" });
+    expect(i2v).toEqual({ prompt: "A duckling", image_url: "https://x/a.png", sound: "on", duration: 15 });
+    expect(generatesAudio(model("kling-3.0-std-i2v"))).toBe(true);
+    const t2v = buildRequestBody(model("kling-3.0-std-t2v"), { ...params, aspectRatio: "9:16", durationSeconds: 1 });
+    expect(t2v).toEqual({ prompt: "A duckling", sound: "on", aspect_ratio: "9:16", duration: 3 });
   });
 
   it("requires a start image for image-to-video", () => {

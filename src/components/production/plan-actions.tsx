@@ -71,7 +71,7 @@ export function NewPlanButton({ stories }: { stories: StoryChoice[] }) {
         New production plan
       </Button>
       <Dialog open={open} onOpenChange={(next) => !pending && setOpen(next)}>
-        <DialogContent>
+        <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle>Start production</DialogTitle>
             <DialogDescription>
@@ -79,11 +79,11 @@ export function NewPlanButton({ stories }: { stories: StoryChoice[] }) {
               itself isn&apos;t changed.
             </DialogDescription>
           </DialogHeader>
-          <div className="grid gap-1.5">
+          <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-1.5">
             <Label htmlFor={`${id}-story`}>Approved story</Label>
             <Select value={storyId} onValueChange={setStoryId}>
-              <SelectTrigger id={`${id}-story`} className="w-full">
-                <SelectValue />
+              <SelectTrigger id={`${id}-story`} className="w-full min-w-0 overflow-hidden">
+                <SelectValue className="min-w-0 truncate" />
               </SelectTrigger>
               <SelectContent>
                 {stories.map((s) => (

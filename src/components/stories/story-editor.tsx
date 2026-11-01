@@ -73,6 +73,7 @@ export function StoryEditor({ value, onChange, version, targetDurationSeconds, d
         characters: [],
         dialogue: [],
         visualPrompt: "",
+        productionNotes: "",
         soundEffects: [],
         musicMood: last?.musicMood ?? "",
       },
@@ -308,14 +309,12 @@ function SceneCard({
         </Button>
       </CardHeader>
       <CardContent className="grid gap-4">
-        <div className="grid gap-4 sm:grid-cols-2">
-          <Field id={`${id}-setting`} label="Setting">
-            <Textarea id={`${id}-setting`} rows={2} value={scene.setting} onChange={(e) => onChange({ setting: e.target.value })} />
-          </Field>
-          <Field id={`${id}-action`} label="Action">
-            <Textarea id={`${id}-action`} rows={2} value={scene.action} onChange={(e) => onChange({ action: e.target.value })} />
-          </Field>
-        </div>
+        <Field id={`${id}-setting`} label="Setting">
+          <Textarea id={`${id}-setting`} rows={3} value={scene.setting} onChange={(e) => onChange({ setting: e.target.value })} />
+        </Field>
+        <Field id={`${id}-action`} label="Action" hint="Shot plan with timed beats">
+          <Textarea id={`${id}-action`} rows={7} value={scene.action} onChange={(e) => onChange({ action: e.target.value })} />
+        </Field>
         <Field id={`${id}-narration`} label="Narration">
           <Textarea
             id={`${id}-narration`}
@@ -370,6 +369,15 @@ function SceneCard({
             onChange={(e) => onChange({ visualPrompt: e.target.value })}
           />
         </div>
+        <Field id={`${id}-production-notes`} label="Production notes" hint="Keyframe and video steps">
+          <Textarea
+            id={`${id}-production-notes`}
+            rows={6}
+            className="font-mono text-xs"
+            value={scene.productionNotes}
+            onChange={(e) => onChange({ productionNotes: e.target.value })}
+          />
+        </Field>
       </CardContent>
     </Card>
   );

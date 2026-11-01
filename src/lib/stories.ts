@@ -142,6 +142,8 @@ const sceneSchema = z.object({
   characters: z.array(z.string()),
   dialogue: z.array(dialogueLineSchema),
   visualPrompt: z.string(),
+  // Defaulted so stories saved before this field existed still parse; the model is still required to fill it.
+  productionNotes: z.string().default(""),
   soundEffects: z.array(z.string()),
   musicMood: z.string(),
 });

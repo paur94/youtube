@@ -1,7 +1,5 @@
-import { createReadStream } from "node:fs";
-import { stat } from "node:fs/promises";
+import { type FileHandle, open, stat } from "node:fs/promises";
 import path from "node:path";
-import { Readable } from "node:stream";
 
 import { MEDIA_TYPES } from "@/lib/production";
 import { resolveMediaPath } from "@/server/media/storage";
@@ -37,13 +35,56 @@ export async function GET(request: Request, ctx: RouteContext<"/media/[...path]"
     if (start >= size || start > end) {
       return new Response(null, { status: 416, headers: { "Content-Range": `bytes */${size}` } });
     }
-    const stream = Readable.toWeb(createReadStream(file, { start, end })) as ReadableStream;
+    const stream = fileStream(file, start, end);
     return new Response(stream, {
       status: 206,
       headers: { ...headers, "Content-Length": String(end - start + 1), "Content-Range": `bytes ${start}-${end}/${size}` },
     });
   }
 
-  const stream = Readable.toWeb(createReadStream(file)) as ReadableStream;
+  const stream = fileStream(file, 0, size - 1);
   return new Response(stream, { headers: { ...headers, "Content-Length": String(size) } });
+}
+
+const CHUNK_SIZE = 64 * 1024;
+
+// Pull-based so reads stop as soon as the client aborts (e.g. a <video> seek cancels its range request).
+// Readable.toWeb keeps pushing after cancel and throws "Controller is already closed".
+function fileStream(file: string, start: number, end: number): ReadableStream<Uint8Array> {
+  let handle: FileHandle | undefined;
+  let position = start;
+  const closeHandle = async () => {
+    const h = handle;
+    handle = undefined;
+    await h?.close().catch(() => {});
+  };
+
+  return new ReadableStream<Uint8Array>({
+    async start() {
+      handle = await open(file, "r");
+    },
+    async pull(controller) {
+      if (!handle) return;
+      const length = Math.min(CHUNK_SIZE, end - position + 1);
+      if (length <= 0) {
+        await closeHandle();
+        controller.close();
+        return;
+      }
+      try {
+        const { bytesRead, buffer } = await handle.read(new Uint8Array(length), 0, length, position);
+        if (bytesRead === 0) {
+          await closeHandle();
+          controller.close();
+          return;
+        }
+        position += bytesRead;
+        controller.enqueue(buffer.subarray(0, bytesRead));
+      } catch (err) {
+        await closeHandle();
+        controller.error(err);
+      }
+    },
+    cancel: closeHandle,
+  });
 }

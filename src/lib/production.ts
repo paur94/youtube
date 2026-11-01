@@ -335,6 +335,7 @@ export type SceneDraft = {
   durationSeconds: number;
   visualPrompt: string;
   negativePrompt: string;
+  notes: string;
   characterNames: string[];
 };
 
@@ -357,6 +358,7 @@ export function scenesFromStory(content: Pick<StoryContent, "scenes">): SceneDra
       durationSeconds: clampDuration(scene.durationSeconds),
       visualPrompt: scene.visualPrompt,
       negativePrompt: DEFAULT_NEGATIVE_PROMPT,
+      notes: scene.productionNotes ?? "",
       characterNames: [...new Set(scene.characters.map((c) => c.trim()).filter(Boolean))],
     }));
 }

@@ -181,6 +181,7 @@ describe("scenesFromStory", () => {
       narration: sampleContent.scenes[0].narration,
       visualPrompt: sampleContent.scenes[0].visualPrompt,
       negativePrompt: DEFAULT_NEGATIVE_PROMPT,
+      notes: sampleContent.scenes[0].productionNotes,
       characterNames: ["Pip"],
     });
   });

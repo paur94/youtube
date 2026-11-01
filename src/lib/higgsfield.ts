@@ -29,6 +29,8 @@ const GROK_ASPECT_RATIOS = ["1:1", "1:2", "2:1", "3:2", "2:3", "4:3", "3:4", "16
 const SEEDANCE_ASPECT_RATIOS = ["16:9", "4:3", "1:1", "3:4", "9:16", "21:9"];
 // Narration and music are produced separately, so generated audio is switched off.
 const SEEDANCE_BODY = { resolution: "1080p", generate_audio: false };
+// 720p with native sound, so the prompt carries the dialogue.
+const SEEDANCE_720P_AUDIO_BODY = { resolution: "720p", generate_audio: true };
 
 // 720p with native sound: about $0.51 per 10s, far cheaper than Seedance 2.5 at 1080p (~$11 per 10s).
 const PIXVERSE_BODY = { resolution: "720p", generate_audio: true };
@@ -36,6 +38,10 @@ const PIXVERSE_BODY = { resolution: "720p", generate_audio: true };
 // Wan 3.0 defaults to 1080p; 720p keeps test runs cheap. Native sound, so the prompt carries the dialogue.
 const WAN_ASPECT_RATIOS = ["16:9", "4:3", "1:1", "3:4", "9:16"];
 const WAN_BODY = { resolution: "720p", generate_audio: true };
+
+// Kling 3.0 "std" is the 720p tier (pro is 1080p). Native sound uses `sound`, not generate_audio.
+const KLING_3_ASPECT_RATIOS = ["16:9", "9:16", "1:1"];
+const KLING_3_BODY = { sound: "on" };
 
 export const HIGGSFIELD_MODELS: readonly HiggsfieldModel[] = [
   {
@@ -123,6 +129,27 @@ export const HIGGSFIELD_MODELS: readonly HiggsfieldModel[] = [
     fixedBody: SEEDANCE_BODY,
   },
   {
+    id: "seedance-2.5-720p-i2v",
+    label: "Seedance 2.5 (image to video, 720p, sound)",
+    path: "/bytedance/seedance-2.5/image-to-video",
+    output: "video",
+    input: "image",
+    durationRange: [4, 30],
+    supportsNegativePrompt: false,
+    fixedBody: SEEDANCE_720P_AUDIO_BODY,
+  },
+  {
+    id: "seedance-2.5-720p-t2v",
+    label: "Seedance 2.5 (text to video, 720p, sound)",
+    path: "/bytedance/seedance-2.5/text-to-video",
+    output: "video",
+    input: "text",
+    durationRange: [4, 30],
+    aspectRatios: SEEDANCE_ASPECT_RATIOS,
+    supportsNegativePrompt: false,
+    fixedBody: SEEDANCE_720P_AUDIO_BODY,
+  },
+  {
     id: "seedance-2.5-t2v",
     label: "Seedance 2.5 (text to video)",
     path: "/bytedance/seedance-2.5/text-to-video",
@@ -132,6 +159,27 @@ export const HIGGSFIELD_MODELS: readonly HiggsfieldModel[] = [
     aspectRatios: SEEDANCE_ASPECT_RATIOS,
     supportsNegativePrompt: false,
     fixedBody: SEEDANCE_BODY,
+  },
+  {
+    id: "kling-3.0-std-i2v",
+    label: "Kling 3.0 Standard (image to video, 720p, sound)",
+    path: "/kling-video/v3.0/std/image-to-video",
+    output: "video",
+    input: "image",
+    durationRange: [3, 15],
+    supportsNegativePrompt: false,
+    fixedBody: KLING_3_BODY,
+  },
+  {
+    id: "kling-3.0-std-t2v",
+    label: "Kling 3.0 Standard (text to video, 720p, sound)",
+    path: "/kling-video/v3.0/std/text-to-video",
+    output: "video",
+    input: "text",
+    durationRange: [3, 15],
+    aspectRatios: KLING_3_ASPECT_RATIOS,
+    supportsNegativePrompt: false,
+    fixedBody: KLING_3_BODY,
   },
   {
     id: "kling-2.5-turbo-pro-i2v",
@@ -191,7 +239,7 @@ export function getHiggsfieldModel(id: string) {
 
 /** True for video models that produce their own soundtrack, so the prompt should carry the dialogue. */
 export function generatesAudio(model: HiggsfieldModel) {
-  return model.output === "video" && model.fixedBody?.generate_audio === true;
+  return model.output === "video" && (model.fixedBody?.generate_audio === true || model.fixedBody?.sound === "on");
 }
 
 /** Smallest supported duration that covers the scene, or the longest one available. */
