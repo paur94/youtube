@@ -247,16 +247,26 @@ function joinNames(names: string[]) {
 
 /**
  * Tells a reference-image model which attached image shows which characters, in upload order.
- * One image can show several characters (e.g. an approved group keyframe).
+ * One image can show several characters (e.g. an approved group keyframe). `sceneImages` follow
+ * the character images: extra scene references (props, places, an approved keyframe).
  */
-export function describeReferenceImages(images: string[][]) {
-  if (!images.length) return "";
-  const list = images.map((names, i) => `image ${i + 1} shows ${joinNames(names)}`).join("; ");
-  return (
-    `The attached reference images show the characters: ${list}. ` +
-    "Keep each character's face, hair, proportions, colours and outfit exactly as in their reference image, " +
-    "and place them in the new scene described above."
-  );
+export function describeReferenceImages(images: string[][], sceneImages = 0) {
+  if (!images.length && !sceneImages) return "";
+  const parts: string[] = [];
+  if (images.length) {
+    const list = images.map((names, i) => `image ${i + 1} shows ${joinNames(names)}`).join("; ");
+    parts.push(
+      `The attached reference images show the characters: ${list}. ` +
+        "Keep each character's face, hair, proportions, colours and outfit exactly as in their reference image, " +
+        "and place them in the new scene described above.",
+    );
+  }
+  if (sceneImages) {
+    const first = images.length + 1;
+    const range = sceneImages === 1 ? `Image ${first} shows` : `Images ${first} to ${first + sceneImages - 1} show`;
+    parts.push(`${range} the setting, props and objects of this scene: keep their shapes, colours and number exactly the same.`);
+  }
+  return parts.join(" ");
 }
 
 // Names of well-known franchises, characters and studios that must not appear in prompts.

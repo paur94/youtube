@@ -24,7 +24,11 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
+import { InspectAssetButton } from "@/components/qc/qc-actions";
+import { IssueCounts, QcIssueList } from "@/components/qc/qc-issue-list";
+import { VisionBadge } from "@/components/qc/vision-badge";
 import { ASSET_SOURCE_LABELS, type AssetKind, type AssetSource, type AssetStatus } from "@/lib/production";
+import type { QcIssue, VisionStatus } from "@/lib/story-qc";
 import { deleteSceneAsset, reviewAsset, selectSceneAsset, setSceneImageAsReference } from "@/server/actions/production";
 
 import { AssetPreview } from "./asset-preview";
@@ -51,6 +55,15 @@ export type AssetItem = {
   downloadError: string | null;
   providerExpiresAt: string | null;
   prompt: string | null;
+  /** Story QC vision check of this file. */
+  qc: {
+    status: VisionStatus;
+    summary: string | null;
+    issues: QcIssue[];
+    dismissed: string[];
+    checkedAt: string | null;
+    thumbnailNote: string | null;
+  };
 };
 
 function formatBytes(bytes: number) {
@@ -58,7 +71,18 @@ function formatBytes(bytes: number) {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
-export function AssetCard({ asset, isFinal, showSelect = true }: { asset: AssetItem; isFinal: boolean; showSelect?: boolean }) {
+export function AssetCard({
+  asset,
+  isFinal,
+  showSelect = true,
+  canInspect = false,
+}: {
+  asset: AssetItem;
+  isFinal: boolean;
+  showSelect?: boolean;
+  /** Claude is configured, so the vision check can run. */
+  canInspect?: boolean;
+}) {
   const [confirmed, setConfirmed] = useState(false);
   const [notes, setNotes] = useState("");
   const [pending, run] = useAction();
@@ -99,6 +123,27 @@ export function AssetCard({ asset, isFinal, showSelect = true }: { asset: AssetI
         </p>
       )}
       {asset.reviewNotes && <p className="text-xs italic text-muted-foreground">“{asset.reviewNotes}”</p>}
+
+      {asset.sceneId && (
+        <div className="grid gap-1.5 border-t pt-2">
+          <div className="flex flex-wrap items-center justify-between gap-1.5">
+            <VisionBadge status={asset.qc.status} />
+            {asset.filePath && canInspect && <InspectAssetButton assetId={asset.id} inspected={asset.qc.checkedAt !== null} />}
+          </div>
+          {asset.qc.checkedAt && (
+            <details className="text-xs">
+              <summary className="cursor-pointer text-muted-foreground">
+                <IssueCounts issues={asset.qc.issues} dismissed={asset.qc.dismissed} /> · {asset.qc.checkedAt}
+              </summary>
+              <div className="mt-2 grid gap-2">
+                {asset.qc.summary && <p className="text-muted-foreground">{asset.qc.summary}</p>}
+                {asset.qc.thumbnailNote && <p className="text-amber-300">Thumbnail frame: {asset.qc.thumbnailNote}</p>}
+                <QcIssueList issues={asset.qc.issues} dismissed={asset.qc.dismissed} sceneId={asset.sceneId} empty="No mismatches found." />
+              </div>
+            </details>
+          )}
+        </div>
+      )}
 
       {asset.status === "pending_review" && (
         <div className="grid gap-2 border-t pt-2">

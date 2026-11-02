@@ -28,6 +28,7 @@ import { MODULES } from "@/lib/navigation";
 import { mediaUrl } from "@/lib/production";
 import { getClaudeConfig } from "@/server/ai/claude";
 import { getFfmpegVersion } from "@/server/media/ffmpeg";
+import { videoConsistency } from "@/server/qc/service";
 import { buildVideoQualityInput, getVideo, isRenderRunning, isVideoRenderCurrent } from "@/server/queries/videos";
 
 export const metadata: Metadata = { title: MODULES.videos.label };
@@ -65,7 +66,7 @@ async function VideoData({ params }: Pick<PageProps<"/videos/[id]">, "params">) 
 
   const claude = getClaudeConfig();
   const locked = isVideoLocked(video);
-  const checks = evaluateVideoQuality(buildVideoQualityInput(video, Boolean(ffmpeg)));
+  const checks = evaluateVideoQuality({ ...buildVideoQualityInput(video, Boolean(ffmpeg)), consistency: await videoConsistency(video) });
   const blockers = videoApprovalBlockers(checks, { rendered: Boolean(video.renderFilePath), metadataApproved: Boolean(video.metadataApprovedAt) });
   const chapters = video.editSettings.chapters ? buildChapters(video.clips, computeTimeline(video.clips, video.editSettings)) : null;
   const running = isRenderRunning(video);

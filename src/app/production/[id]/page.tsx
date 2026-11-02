@@ -18,6 +18,7 @@ import {
   SceneOrderButtons,
 } from "@/components/production/plan-actions";
 import { ProgressBar, ProgressLegend } from "@/components/production/progress";
+import { PlanQcCard } from "@/components/qc/plan-qc-card";
 import { Button } from "@/components/ui/button";
 import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -30,7 +31,9 @@ import {
   summarizeProgress,
 } from "@/lib/production";
 import { formatDuration } from "@/lib/stories";
+import { getClaudeConfig } from "@/server/ai/claude";
 import { getHiggsfieldConfig } from "@/server/providers/higgsfield";
+import { getPlanQcOverview } from "@/server/qc/service";
 import { getPlan } from "@/server/queries/production";
 
 export const metadata: Metadata = { title: MODULES.production.label };
@@ -71,8 +74,8 @@ async function PlanData({ params }: Pick<PageProps<"/production/[id]">, "params"
   await connection();
   const { id } = await params;
   if (!z.uuid().safeParse(id).success) notFound();
-  const plan = await getPlan(id);
-  if (!plan) notFound();
+  const [plan, qcOverview] = await Promise.all([getPlan(id), getPlanQcOverview(id)]);
+  if (!plan || !qcOverview) notFound();
 
   const progress = summarizeProgress(plan.scenes);
   const costs = summarizeCosts(plan.jobs);
@@ -186,6 +189,8 @@ async function PlanData({ params }: Pick<PageProps<"/production/[id]">, "params"
               </ol>
             )}
           </Card>
+
+          {plan.scenes.length > 0 && <PlanQcCard planId={plan.id} overview={qcOverview} claudeConfigured={getClaudeConfig().configured} />}
         </div>
 
         <div className="grid content-start gap-6">

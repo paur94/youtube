@@ -14,13 +14,16 @@ import { GenerationPanel } from "@/components/production/generation-panel";
 import { JobList } from "@/components/production/job-list";
 import { DeleteSceneButton, JobPoller } from "@/components/production/plan-actions";
 import { SceneForm } from "@/components/production/scene-form";
+import { SceneQcCard } from "@/components/qc/scene-qc-card";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { MODULES } from "@/lib/navigation";
 import { buildGenerationPrompt, findPromptConcerns, POLLABLE_JOB_STATUSES } from "@/lib/production";
+import { getClaudeConfig } from "@/server/ai/claude";
 import { getHedraConfig } from "@/server/providers/hedra";
 import { getHiggsfieldConfig } from "@/server/providers/higgsfield";
+import { generationBlockers, getReferenceCandidates, loadSceneQc } from "@/server/qc/service";
 import { getCharacterOptions, getScene } from "@/server/queries/production";
 
 export const metadata: Metadata = { title: MODULES.production.label };
@@ -69,14 +72,18 @@ async function SceneData({ params }: Pick<Props, "params">) {
   await connection();
   const { id, sceneId } = await params;
   if (!z.uuid().safeParse(id).success || !z.uuid().safeParse(sceneId).success) notFound();
-  const [detail, characterOptions] = await Promise.all([getScene(sceneId), getCharacterOptions()]);
-  if (!detail || detail.plan.id !== id) notFound();
+  const [detail, characterOptions, qc] = await Promise.all([getScene(sceneId), getCharacterOptions(), loadSceneQc(sceneId)]);
+  if (!detail || detail.plan.id !== id || !qc) notFound();
+  const referenceCandidates = await getReferenceCandidates(id, detail.characterIds);
+  const claude = getClaudeConfig();
+  const qcBlockers = generationBlockers(qc.current).map((i) => `Story QC: ${i.message}`);
+  const assetQc = { specHash: qc.current.state.specHash, dismissed: qc.current.continuity.dismissed };
 
   const { scene, plan } = detail;
   const higgsfield = getHiggsfieldConfig();
   const linked = characterOptions.filter((c) => detail.characterIds.includes(c.id));
   const prompt = buildGenerationPrompt({ visualPrompt: scene.visualPrompt, characters: linked, visualStyle: plan.visualStyle });
-  const concerns = findPromptConcerns(prompt);
+  const concerns = [...findPromptConcerns(prompt), ...qcBlockers];
   const revisions = new Map(detail.assets.map((a) => [a.id, a.revision]));
   const activeApiJobs = detail.jobs.filter((j) => j.mode === "api" && POLLABLE_JOB_STATUSES.includes(j.status)).length;
 
@@ -189,6 +196,8 @@ async function SceneData({ params }: Pick<Props, "params">) {
         </div>
       </div>
 
+      <SceneQcCard qc={qc.current} candidates={referenceCandidates} />
+
       <Card>
         <CardHeader>
           <CardTitle>Assets</CardTitle>
@@ -207,8 +216,9 @@ async function SceneData({ params }: Pick<Props, "params">) {
               {detail.assets.map((asset) => (
                 <AssetCard
                   key={asset.id}
-                  asset={toAssetItem(asset, (assetId) => revisions.get(assetId))}
+                  asset={toAssetItem(asset, (assetId) => revisions.get(assetId), assetQc)}
                   isFinal={scene.selectedAssetId === asset.id}
+                  canInspect={claude.configured}
                 />
               ))}
             </div>

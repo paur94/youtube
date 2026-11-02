@@ -25,6 +25,7 @@ export type QualityCheck = {
     | "opening"
     | "story"
     | "children"
+    | "consistency"
     | "metadata";
   label: string;
   status: CheckStatus;
@@ -47,6 +48,8 @@ export type QualityInput = {
   metadata: { title: string; description: string; hashtags: string[] };
   metadataApproved: boolean;
   ffmpegAvailable: boolean;
+  /** Story-to-video consistency of the source clip (script QC + vision check); null when the scene is gone. */
+  consistency?: { status: CheckStatus; details: string[] } | null;
 };
 
 function check(id: QualityCheck["id"], label: string, status: CheckStatus, details: string[]): QualityCheck {
@@ -219,6 +222,10 @@ export function evaluateQuality(input: QualityInput): QualityCheck[] {
         "Claude's review is advisory; your own review is the real check.",
       ]),
     );
+  }
+
+  if (input.consistency) {
+    checks.push(check("consistency", "Story consistency", input.consistency.status, input.consistency.details));
   }
 
   // Metadata

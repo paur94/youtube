@@ -43,6 +43,7 @@ import {
   JOB_TIMEOUT_MS,
   POLLABLE_JOB_STATUSES,
 } from "@/lib/production";
+import { readSceneContinuity } from "@/lib/story-qc";
 import { downloadMedia, MediaError, resolveMediaPath, saveInputFile } from "@/server/media/storage";
 import { getHedraClient, HEDRA_NOT_CONFIGURED_MESSAGE, HedraError } from "@/server/providers/hedra";
 import {
@@ -289,16 +290,24 @@ export async function submitApiGeneration(options: SubmitOptions): Promise<Servi
   let referenceUrls: string[] | undefined;
   if (model.maxReferenceImages) {
     const refs = (await pickCharacterReferences(loaded.characters)).slice(0, model.maxReferenceImages);
+    // Extra scene references (props, places, keyframes) fill the remaining slots.
+    const sceneRefIds = readSceneContinuity(scene.continuity).referenceAssetIds;
+    const sceneRefs = sceneRefIds.length
+      ? (await db.select().from(assets).where(and(inArray(assets.id, sceneRefIds), eq(assets.kind, "image"), eq(assets.status, "approved"))))
+          .filter((a) => !refs.some((r) => r.asset.id === a.id))
+          .slice(0, model.maxReferenceImages - refs.length)
+      : [];
     try {
       const uploaded = await Promise.all(
         refs.map(async (r) => ({ names: r.names, url: await publicImageUrl(client, r.asset) })),
       );
       const usable = uploaded.filter((r): r is { names: string[]; url: string } => Boolean(r.url));
-      if (usable.length) {
-        referenceUrls = usable.map((r) => r.url);
+      const sceneUrls = (await Promise.all(sceneRefs.map((a) => publicImageUrl(client, a)))).filter((u): u is string => Boolean(u));
+      if (usable.length || sceneUrls.length) {
+        referenceUrls = [...usable.map((r) => r.url), ...sceneUrls];
         prompt = `${prompt}
 
-${describeReferenceImages(usable.map((r) => r.names))}`;
+${describeReferenceImages(usable.map((r) => r.names), sceneUrls.length)}`;
       }
     } catch (error) {
       return {

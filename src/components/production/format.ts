@@ -1,14 +1,23 @@
 import type { Asset, GenerationJob } from "@/db/schema";
 import { getHiggsfieldModel } from "@/lib/higgsfield";
+import { readVisionReport, visionStatus } from "@/lib/story-qc";
 
 import type { AssetItem } from "./asset-card";
 import type { JobItem } from "./job-list";
 
 export const dateTimeFormat = new Intl.DateTimeFormat("en", { dateStyle: "medium", timeStyle: "short" });
 
-/** Serialisable props for <AssetCard>. `revisionOf` maps asset ids to revision numbers. */
-export function toAssetItem(asset: Asset, revisionOf: (id: string) => number | undefined = () => undefined): AssetItem {
+/**
+ * Serialisable props for <AssetCard>. `revisionOf` maps asset ids to revision numbers. `qc` is the
+ * scene's current script hash and dismissed issues, so a vision report on an older script shows as stale.
+ */
+export function toAssetItem(
+  asset: Asset,
+  revisionOf: (id: string) => number | undefined = () => undefined,
+  qc: { specHash: string | null; dismissed: string[] } = { specHash: null, dismissed: [] },
+): AssetItem {
   const meta = asset.metadata ?? {};
+  const report = readVisionReport(meta);
   const expires = typeof meta.providerExpiresAt === "string" ? new Date(meta.providerExpiresAt) : null;
   return {
     id: asset.id,
@@ -29,6 +38,14 @@ export function toAssetItem(asset: Asset, revisionOf: (id: string) => number | u
     downloadError: typeof meta.downloadError === "string" ? meta.downloadError : null,
     providerExpiresAt: expires && !Number.isNaN(expires.getTime()) ? dateTimeFormat.format(expires) : null,
     prompt: asset.prompt,
+    qc: {
+      status: visionStatus(report, qc.specHash, qc.dismissed),
+      summary: report?.summary ?? null,
+      issues: report?.issues ?? [],
+      dismissed: qc.dismissed,
+      checkedAt: report ? dateTimeFormat.format(new Date(report.checkedAt)) : null,
+      thumbnailNote: report && !report.thumbnail.ok ? report.thumbnail.note : null,
+    },
   };
 }
 

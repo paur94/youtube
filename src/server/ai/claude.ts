@@ -166,7 +166,8 @@ export type StructuredResult<T> = {
  */
 export async function runStructuredGeneration<S extends z.ZodType>(
   client: Anthropic,
-  request: StoryRequest & { maxTokens: number; subject: string },
+  // `content` replaces the plain-text user turn when the request includes images (the vision check).
+  request: StoryRequest & { maxTokens: number; subject: string; content?: Anthropic.Beta.BetaContentBlockParam[] },
   schema: S,
 ): Promise<StructuredResult<z.infer<S>>> {
   const started = Date.now();
@@ -184,7 +185,7 @@ export async function runStructuredGeneration<S extends z.ZodType>(
     model: request.model,
     max_tokens: request.maxTokens,
     system: request.system,
-    messages: [{ role: "user", content: request.user }],
+    messages: [{ role: "user", content: request.content ?? request.user }],
     output_config: { effort: request.effort, format: betaZodOutputFormat(schema) },
     betas: ["server-side-fallback-2026-07-01"],
     fallbacks: "default",

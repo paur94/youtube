@@ -154,6 +154,13 @@ describe("describeReferenceImages", () => {
     expect(describeReferenceImages([["Mila", "Papa", "Zip"]])).toContain("image 1 shows Mila, Papa and Zip");
     expect(describeReferenceImages([])).toBe("");
   });
+
+  it("describes scene references after the character references", () => {
+    const text = describeReferenceImages([["Mila"]], 2);
+    expect(text).toContain("image 1 shows Mila");
+    expect(text).toContain("Images 2 to 3 show the setting, props and objects");
+    expect(describeReferenceImages([], 1)).toMatch(/^Image 1 shows the setting/);
+  });
 });
 
 describe("findPromptConcerns", () => {

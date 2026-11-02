@@ -212,3 +212,58 @@ function runWithProgress(
     });
   });
 }
+
+// ---------- Frames for the vision check ----------
+
+/** Runs FFmpeg and returns its binary stdout (an encoded image). */
+function runBinary(command: string, args: string[], timeout = 60_000) {
+  return new Promise<Buffer>((resolve, reject) => {
+    execFile(command, args, { encoding: "buffer", timeout, maxBuffer: 32 * 1024 * 1024, windowsHide: true }, (error, stdout, stderr) => {
+      if (error) {
+        const missing = (error as NodeJS.ErrnoException).code === "ENOENT";
+        reject(
+          new FfmpegError(
+            missing
+              ? `${path.basename(command)} was not found. Install FFmpeg or set FFMPEG_PATH and FFPROBE_PATH in .env.local.`
+              : `${path.basename(command)} failed: ${lastLines(stderr.toString("utf8")) || error.message}`,
+          ),
+        );
+        return;
+      }
+      if (!stdout.length) reject(new FfmpegError("FFmpeg produced no image"));
+      else resolve(stdout);
+    });
+  });
+}
+
+/**
+ * One small JPEG per timestamp, read from the clip without changing it. Small frames keep vision
+ * calls cheap: a 512-pixel-wide frame costs a few hundred input tokens.
+ */
+export async function extractFrames(relativePath: string, times: number[], width = 512) {
+  const { ffmpeg } = getFfmpegPaths();
+  const input = absolute(relativePath);
+  const frames: { time: number; jpeg: Buffer }[] = [];
+  for (const time of times) {
+    // -ss before -i seeks fast to the nearest keyframe, then decodes forward to the exact time.
+    const jpeg = await runBinary(ffmpeg, [
+      "-hide_banner", "-nostdin", "-loglevel", "error",
+      "-ss", time.toFixed(2), "-i", input,
+      "-frames:v", "1", "-vf", `scale=${width}:-2`, "-q:v", "5",
+      "-f", "image2pipe", "-vcodec", "mjpeg", "pipe:1",
+    ]);
+    frames.push({ time, jpeg });
+  }
+  return frames;
+}
+
+/** A still image (e.g. a reference) shrunk to a small JPEG. */
+export async function downscaleImage(relativePath: string, width = 512) {
+  const { ffmpeg } = getFfmpegPaths();
+  return runBinary(ffmpeg, [
+    "-hide_banner", "-nostdin", "-loglevel", "error",
+    "-i", absolute(relativePath),
+    "-frames:v", "1", "-vf", `scale='min(${width},iw)':-2`, "-q:v", "5",
+    "-f", "image2pipe", "-vcodec", "mjpeg", "pipe:1",
+  ]);
+}

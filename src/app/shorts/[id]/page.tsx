@@ -7,6 +7,7 @@ import { Suspense } from "react";
 import { z } from "zod";
 
 import { PageHeader } from "@/components/page-header";
+import { ShortStoryQcCard } from "@/components/qc/short-story-qc";
 import { dateTimeFormat } from "@/components/production/format";
 import { CheckIcon, QualitySummary, ShortStatusBadge, StandaloneBadge } from "@/components/shorts/badges";
 import { AnalyzeButton, ApplySuggestionsButton, MetadataForm, ReviewActions } from "@/components/shorts/short-actions";
@@ -22,6 +23,7 @@ import { aspectLabel } from "@/lib/short-video";
 import { formatCaptionLines, isShortLocked } from "@/lib/shorts";
 import { getClaudeConfig } from "@/server/ai/claude";
 import { getFfmpegVersion } from "@/server/media/ffmpeg";
+import { getShortStoryQc, shortConsistency } from "@/server/qc/service";
 import { buildQualityInput, getShort, isRenderCurrent } from "@/server/queries/shorts";
 
 export const metadata: Metadata = { title: MODULES.shorts.label };
@@ -59,9 +61,11 @@ async function ShortData({ params }: Pick<PageProps<"/shorts/[id]">, "params">) 
 
   const claude = getClaudeConfig();
   const locked = isShortLocked(short);
-  const checks = evaluateQuality(
-    buildQualityInput(short, { ffmpegAvailable: Boolean(ffmpeg), hasDialogue: (short.scene?.dialogue.length ?? 0) > 0 }),
-  );
+  const [consistency, storyQc] = await Promise.all([shortConsistency(short), getShortStoryQc(short)]);
+  const checks = evaluateQuality({
+    ...buildQualityInput(short, { ffmpegAvailable: Boolean(ffmpeg), hasDialogue: (short.scene?.dialogue.length ?? 0) > 0 }),
+    consistency,
+  });
   const quality = summarizeQuality(checks);
   const blockers = approvalBlockers(checks, { rendered: Boolean(short.renderFilePath), metadataApproved: Boolean(short.metadataApprovedAt) });
   const probe = short.sourceProbe;
@@ -157,7 +161,7 @@ async function ShortData({ params }: Pick<PageProps<"/shorts/[id]">, "params">) 
           <Card>
             <CardHeader>
               <CardTitle>Review</CardTitle>
-              <CardDescription>Approval needs a current render, approved metadata and no failed checks.</CardDescription>
+              <CardDescription>Approval needs a current render, approved metadata and no failed checks, including story consistency.</CardDescription>
             </CardHeader>
             <CardContent>
               <ReviewActions shortId={short.id} status={short.status} uploaded={short.youtubeVideoId !== null} blockers={blockers} title={short.title} />
@@ -165,6 +169,8 @@ async function ShortData({ params }: Pick<PageProps<"/shorts/[id]">, "params">) 
           </Card>
         </div>
       </div>
+
+      {storyQc && <ShortStoryQcCard qc={storyQc} sourceAssetId={short.sourceAssetId} canInspect={claude.configured} locked={locked} />}
 
       <div className="grid gap-6 xl:grid-cols-3">
         <Card className="xl:col-span-2">

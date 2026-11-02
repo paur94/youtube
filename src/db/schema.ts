@@ -35,6 +35,7 @@ import {
 } from "../lib/production";
 import { type EditSettings, VIDEO_STATUSES, type VideoClip } from "../lib/long-video";
 import type { AudioLevels, MediaProbe } from "../lib/short-video";
+import type { PlanContinuity, SceneContinuity } from "../lib/story-qc";
 import { type CaptionCue, SHORT_STATUSES, type ShortAnalysis, type TrafficSource, type VideoSettings } from "../lib/shorts";
 import { REVISION_SOURCES, STORY_STATUSES, type StoryContent, type StoryScene } from "../lib/stories";
 
@@ -212,6 +213,8 @@ export const productionPlans = pgTable(
     videoModel: text().notNull(),
     // Story revision the scenes were imported from.
     sourceRevision: integer(),
+    // Continuity bible (characters, props, places) from the last story QC run.
+    continuity: jsonb().$type<PlanContinuity>(),
     createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp({ withTimezone: true })
       .notNull()
@@ -244,6 +247,8 @@ export const productionScenes = pgTable(
     status: sceneStatus().notNull().default("ready"),
     error: text(),
     selectedAssetId: uuid().references((): AnyPgColumn => assets.id, { onDelete: "set null" }),
+    // Story QC: extra reference images, shot list and preflight issues, dismissals, prompt history.
+    continuity: jsonb().$type<SceneContinuity>(),
     createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp({ withTimezone: true })
       .notNull()

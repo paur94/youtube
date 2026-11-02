@@ -33,6 +33,7 @@ import { getClaudeClient, getClaudeConfig, NOT_CONFIGURED_MESSAGE, runStructured
 import { buildVideoMetadataPrompt } from "@/server/ai/video-prompt";
 import { FfmpegError, getFfmpegVersion, measureLoudness, probeMedia, renderTimeline } from "@/server/media/ffmpeg";
 import { resolveMediaPath } from "@/server/media/storage";
+import { consistencyPublishBlocker, videoConsistency } from "@/server/qc/service";
 import { getYouTubeConfig, YouTubeError } from "@/server/providers/youtube";
 import { buildVideoQualityInput, getVideo, getVideoPublishContext, isRenderRunning, isVideoRenderCurrent, RENDER_STALE_MS } from "@/server/queries/videos";
 import { getYouTubeClient, getYouTubeConnection } from "@/server/youtube/connection";
@@ -548,7 +549,8 @@ export async function suggestVideoMetadata(id: string): Promise<ActionResult> {
 
 async function reviewBlockers(video: Video) {
   const ffmpegAvailable = Boolean(await getFfmpegVersion());
-  const checks = evaluateVideoQuality(buildVideoQualityInput(video, ffmpegAvailable));
+  const consistency = await videoConsistency(video);
+  const checks = evaluateVideoQuality({ ...buildVideoQualityInput(video, ffmpegAvailable), consistency });
   return videoApprovalBlockers(checks, { rendered: Boolean(video.renderFilePath), metadataApproved: Boolean(video.metadataApprovedAt) });
 }
 
@@ -686,6 +688,8 @@ export async function publishVideoToYouTube(id: string, mode: "now" | "schedule"
     if (video.youtubeVideoId) return { ok: false, message: ALREADY_UPLOADED };
     if (!video.metadataApprovedAt) return { ok: false, message: "Approve the metadata first" };
     if (!video.renderFilePath || !isVideoRenderCurrent(video)) return { ok: false, message: "The render is missing or out of date. Render it again." };
+    const storyBlocker = consistencyPublishBlocker(await videoConsistency(video));
+    if (storyBlocker) return { ok: false, message: storyBlocker };
     const file = resolveMediaPath(video.renderFilePath);
     if (!file) return { ok: false, message: "The rendered file isn't in the media folder" };
     if (input.data.mode === "schedule" && (!video.scheduledAt || video.scheduledAt.getTime() < Date.now() + MIN_SCHEDULE_LEAD_MS)) {

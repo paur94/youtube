@@ -410,6 +410,8 @@ export type VideoQualityInput = {
   metadata: { title: string; description: string; hashtags: string[] };
   metadataApproved: boolean;
   ffmpegAvailable: boolean;
+  /** Story-to-video consistency of every clip (script QC + vision check). */
+  consistency?: { status: CheckStatus; details: string[] } | null;
 };
 
 export function evaluateVideoQuality(input: VideoQualityInput): VideoCheck[] {
@@ -513,6 +515,10 @@ export function evaluateVideoQuality(input: VideoQualityInput): VideoCheck[] {
         ...(input.captionsReviewed ? [] : ["Not marked as checked against the audio yet."]),
       ],
     });
+  }
+
+  if (input.consistency) {
+    checks.push({ id: "consistency", label: "Story consistency", status: input.consistency.status, details: input.consistency.details });
   }
 
   const concerns = findMetadataConcerns({ ...input.metadata, hook: "" });

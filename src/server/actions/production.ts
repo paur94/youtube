@@ -40,6 +40,7 @@ import {
   submitApiGeneration,
   syncSceneStatus,
 } from "@/server/production/service";
+import { sceneGenerationBlockers, selectionBlocker } from "@/server/qc/service";
 
 import type { ActionResult } from "./ideas";
 
@@ -393,6 +394,14 @@ export async function generateScene(sceneId: string, options: z.input<typeof gen
   if (!id.success || !parsed.success) return { ok: false, message: "Invalid generation request" };
   let result: ActionResult;
   try {
+    // Contradictions in the script are cheaper to fix now than after paying for a clip.
+    const blockers = await sceneGenerationBlockers(id.data);
+    if (blockers.length) {
+      return {
+        ok: false,
+        message: `Story QC found ${blockers.length} critical issue${blockers.length === 1 ? "" : "s"}: ${blockers[0].message} Apply the corrections or dismiss the issue first.`,
+      };
+    }
     result = await submitApiGeneration({ sceneId: id.data, ...parsed.data });
   } catch (error) {
     console.error("generateScene failed", error);
@@ -688,6 +697,8 @@ export async function selectSceneAsset(sceneId: string, assetId: string | null):
           .where(and(eq(assets.id, asset.data), eq(assets.sceneId, id.data)));
         if (!row) return { ok: false, message: "That asset doesn't belong to this scene" };
         if (row.status !== "approved") return { ok: false, message: "Approve the asset after reviewing it first" };
+        const blocked = await selectionBlocker(id.data, asset.data);
+        if (blocked) return { ok: false, message: blocked };
       }
       const [scene] = await tx
         .update(productionScenes)

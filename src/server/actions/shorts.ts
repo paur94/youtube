@@ -40,6 +40,7 @@ import {
 import { buildPublishOrderPrompt, buildShortAnalysisPrompt } from "@/server/ai/shorts-prompt";
 import { FfmpegError, getFfmpegVersion, measureLoudness, probeMedia, renderVertical } from "@/server/media/ffmpeg";
 import { resolveMediaPath } from "@/server/media/storage";
+import { consistencyPublishBlocker, shortConsistency } from "@/server/qc/service";
 import { getYouTubeConfig, YouTubeError } from "@/server/providers/youtube";
 import { buildQualityInput, getShort, getShortPublishContext, isRenderCurrent } from "@/server/queries/shorts";
 import { getYouTubeClient, getYouTubeConnection } from "@/server/youtube/connection";
@@ -573,7 +574,8 @@ export async function probeShortSource(id: string): Promise<ActionResult> {
 
 async function reviewBlockers(short: Short) {
   const ffmpegAvailable = Boolean(await getFfmpegVersion());
-  const checks = evaluateQuality(buildQualityInput(short, { ffmpegAvailable, hasDialogue: short.captions.length > 0 }));
+  const consistency = await shortConsistency(short);
+  const checks = evaluateQuality({ ...buildQualityInput(short, { ffmpegAvailable, hasDialogue: short.captions.length > 0 }), consistency });
   return approvalBlockers(checks, { rendered: Boolean(short.renderFilePath), metadataApproved: Boolean(short.metadataApprovedAt) });
 }
 
@@ -717,6 +719,8 @@ export async function publishShortToYouTube(id: string, mode: "now" | "schedule"
     if (short.youtubeVideoId) return { ok: false, message: ALREADY_UPLOADED };
     if (!short.metadataApprovedAt) return { ok: false, message: "Approve the metadata first" };
     if (!short.renderFilePath || !isRenderCurrent(short)) return { ok: false, message: "The vertical render is missing or out of date. Re-render it." };
+    const storyBlocker = consistencyPublishBlocker(await shortConsistency(short));
+    if (storyBlocker) return { ok: false, message: storyBlocker };
     const file = resolveMediaPath(short.renderFilePath);
     if (!file) return { ok: false, message: "The rendered file isn't in the media folder" };
     if (input.data.mode === "schedule" && (!short.scheduledAt || short.scheduledAt.getTime() < Date.now() + MIN_SCHEDULE_LEAD_MS)) {

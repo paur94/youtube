@@ -7,6 +7,7 @@ import { productionScenes } from "@/db/schema";
 import { HEDRA_RESOLUTIONS } from "@/lib/hedra";
 import { normalizeContentType } from "@/server/media/storage";
 import { submitHedraGeneration } from "@/server/production/service";
+import { sceneGenerationBlockers } from "@/server/qc/service";
 import { sameOrigin } from "@/server/same-origin";
 
 // Hedra Character 3 submissions carry the driving audio, so they go through a route handler:
@@ -48,6 +49,8 @@ export async function POST(request: Request) {
       .from(productionScenes)
       .where(eq(productionScenes.id, fields.data.sceneId));
     if (!scene) return json(false, "Scene not found", 404);
+    const blockers = await sceneGenerationBlockers(fields.data.sceneId);
+    if (blockers.length) return json(false, `Story QC found a critical issue: ${blockers[0].message} Fix or dismiss it first.`);
 
     const result = await submitHedraGeneration({
       ...fields.data,

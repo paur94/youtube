@@ -16,6 +16,7 @@ import { evaluateQuality, summarizeQuality } from "@/lib/short-qc";
 import { isShortLocked } from "@/lib/shorts";
 import { getClaudeConfig } from "@/server/ai/claude";
 import { getFfmpegVersion } from "@/server/media/ffmpeg";
+import { shortsConsistency } from "@/server/qc/service";
 import { buildQualityInput, getImportCandidates, listShorts } from "@/server/queries/shorts";
 
 export const metadata: Metadata = { title: MODULES.shorts.label };
@@ -44,6 +45,7 @@ async function ShortsData() {
   await connection();
   const [rows, candidates, ffmpeg] = await Promise.all([listShorts(), getImportCandidates(), getFfmpegVersion()]);
   const claude = getClaudeConfig();
+  const consistency = await shortsConsistency(rows.map((r) => r.short));
 
   const groups = new Map<string, { planId: string | null; title: string; rows: typeof rows }>();
   for (const row of rows) {
@@ -99,7 +101,10 @@ async function ShortsData() {
                 <CardContent className="grid gap-2">
                   {group.rows.map(({ short, currentAssetId }) => {
                     const quality = summarizeQuality(
-                      evaluateQuality(buildQualityInput(short, { ffmpegAvailable: Boolean(ffmpeg), hasDialogue: false })),
+                      evaluateQuality({
+                        ...buildQualityInput(short, { ffmpegAvailable: Boolean(ffmpeg), hasDialogue: false }),
+                        consistency: consistency.get(short.id) ?? null,
+                      }),
                     );
                     const preview = short.renderFilePath ?? short.sourceFilePath;
                     const sourceChanged = currentAssetId && short.sourceAssetId && currentAssetId !== short.sourceAssetId;
