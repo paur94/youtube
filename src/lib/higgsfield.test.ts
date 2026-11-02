@@ -121,6 +121,15 @@ describe("buildRequestBody", () => {
     expect(t2v).toEqual({ prompt: "A duckling", sound: "on", aspect_ratio: "9:16", duration: 3 });
   });
 
+  it("builds Kling 4.0 requests at 720p with native sound and a 3–30s duration", () => {
+    const i2v = buildRequestBody(model("kling-4.0-i2v"), { ...params, durationSeconds: 45, imageUrl: "https://x/a.png" });
+    expect(i2v).toEqual({ prompt: "A duckling", image_url: "https://x/a.png", resolution: "720p", duration: 30 });
+    expect(generatesAudio(model("kling-4.0-i2v"))).toBe(true);
+    const t2v = buildRequestBody(model("kling-4.0-t2v"), { ...params, aspectRatio: "9:16", durationSeconds: 1 });
+    expect(t2v).toEqual({ prompt: "A duckling", resolution: "720p", aspect_ratio: "9:16", duration: 3 });
+    expect(generatesAudio(model("kling-4.0-t2v"))).toBe(true);
+  });
+
   it("requires a start image for image-to-video", () => {
     expect(() => buildRequestBody(model("hailuo-2.3-standard-i2v"), params)).toThrow(/start image/);
   });

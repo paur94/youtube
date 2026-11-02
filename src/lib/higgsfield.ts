@@ -22,6 +22,8 @@ export type HiggsfieldModel = {
   maxReferenceImages?: number;
   /** Fixed, documented fields sent with every request. */
   fixedBody?: Record<string, unknown>;
+  /** Always generates its own soundtrack; the API has no switch for it. */
+  nativeAudio?: boolean;
 };
 
 const SOUL_ASPECT_RATIOS = ["1:1", "4:3", "3:4", "3:2", "2:3", "5:4", "4:5", "16:9", "9:16", "21:9"];
@@ -42,6 +44,11 @@ const WAN_BODY = { resolution: "720p", generate_audio: true };
 // Kling 3.0 "std" is the 720p tier (pro is 1080p). Native sound uses `sound`, not generate_audio.
 const KLING_3_ASPECT_RATIOS = ["16:9", "9:16", "1:1"];
 const KLING_3_BODY = { sound: "on" };
+
+// Kling 4.0 always generates stereo sound (no audio field in its schema). Checked against the API's
+// /estimate validation, November 2026: about $1.34 per 10s at 720p. Image-to-video takes no aspect_ratio.
+const KLING_4_ASPECT_RATIOS = ["21:9", "16:9", "9:16", "1:1"];
+const KLING_4_BODY = { resolution: "720p" };
 
 export const HIGGSFIELD_MODELS: readonly HiggsfieldModel[] = [
   {
@@ -161,6 +168,29 @@ export const HIGGSFIELD_MODELS: readonly HiggsfieldModel[] = [
     fixedBody: SEEDANCE_BODY,
   },
   {
+    id: "kling-4.0-i2v",
+    label: "Kling 4.0 (image to video, 720p, sound, ~$1.34 per 10s)",
+    path: "/kling-video/v4.0/image-to-video",
+    output: "video",
+    input: "image",
+    durationRange: [3, 30],
+    supportsNegativePrompt: false,
+    fixedBody: KLING_4_BODY,
+    nativeAudio: true,
+  },
+  {
+    id: "kling-4.0-t2v",
+    label: "Kling 4.0 (text to video, 720p, sound, ~$1.34 per 10s)",
+    path: "/kling-video/v4.0/text-to-video",
+    output: "video",
+    input: "text",
+    durationRange: [3, 30],
+    aspectRatios: KLING_4_ASPECT_RATIOS,
+    supportsNegativePrompt: false,
+    fixedBody: KLING_4_BODY,
+    nativeAudio: true,
+  },
+  {
     id: "kling-3.0-std-i2v",
     label: "Kling 3.0 Standard (image to video, 720p, sound)",
     path: "/kling-video/v3.0/std/image-to-video",
@@ -239,7 +269,10 @@ export function getHiggsfieldModel(id: string) {
 
 /** True for video models that produce their own soundtrack, so the prompt should carry the dialogue. */
 export function generatesAudio(model: HiggsfieldModel) {
-  return model.output === "video" && (model.fixedBody?.generate_audio === true || model.fixedBody?.sound === "on");
+  return (
+    model.output === "video" &&
+    (model.nativeAudio === true || model.fixedBody?.generate_audio === true || model.fixedBody?.sound === "on")
+  );
 }
 
 /** Smallest supported duration that covers the scene, or the longest one available. */
