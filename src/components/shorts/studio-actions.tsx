@@ -1,14 +1,24 @@
 "use client";
 
-import { ImportIcon, ListOrderedIcon, SparklesIcon } from "lucide-react";
+import { ImportIcon, ListOrderedIcon, SparklesIcon, Trash2Icon } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { toast } from "sonner";
 
 import { useAction } from "@/components/production/use-action";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { analyzeShort, importShorts, suggestPublishOrder } from "@/server/actions/shorts";
+import { analyzeShort, deleteShort, importShorts, suggestPublishOrder } from "@/server/actions/shorts";
 
 type Candidate = { id: string; title: string; scenes: { sceneId: string; position: number; title: string; durationSeconds: string | null; shortId: string | null }[] };
 
@@ -128,5 +138,44 @@ export function SuggestOrderButton({ planId, disabled }: { planId: string; disab
       <ListOrderedIcon />
       {pending ? "Thinking…" : "Suggest publishing order"}
     </Button>
+  );
+}
+
+/** Removes a Short from the studio after confirmation; the scene and its clip stay. */
+export function RemoveShortButton({ shortId, title, published }: { shortId: string; title: string; published: boolean }) {
+  const [open, setOpen] = useState(false);
+  const [pending, run] = useAction();
+  return (
+    <>
+      <Button
+        variant="ghost"
+        size="icon"
+        className="shrink-0 text-muted-foreground hover:text-destructive"
+        disabled={pending}
+        onClick={() => setOpen(true)}
+        aria-label={`Remove “${title}”`}
+        title="Remove from the studio"
+      >
+        <Trash2Icon />
+      </Button>
+      <AlertDialog open={open} onOpenChange={setOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Remove “{title}”?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Removes the Short, its analysis and analytics from the studio. The production scene, the original clip and rendered files
+              stay untouched, and you can import the scene again later.
+              {published && " It stays on YouTube: delete it in YouTube Studio if you want it gone there too."}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction variant="destructive" onClick={() => run(() => deleteShort(shortId))}>
+              Remove
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </>
   );
 }

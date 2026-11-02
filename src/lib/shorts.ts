@@ -347,6 +347,8 @@ export function buildYouTubeMetadata(input: {
   scheduledAt: Date | null;
   hasCaptions: boolean;
   visibility?: "public" | "private";
+  /** Shown in the upload package; defaults to the vertical Short format. */
+  orientation?: string;
 }) {
   const language = input.language ? LANGUAGE_CODES[input.language.trim().toLowerCase()] : undefined;
   const tags: string[] = [];
@@ -379,7 +381,7 @@ export function buildYouTubeMetadata(input: {
     extras: {
       playlist: input.playlist.trim() || null,
       captionsFile: input.hasCaptions ? "captions.srt" : null,
-      orientation: "vertical 9:16 (1080×1920)",
+      orientation: input.orientation ?? "vertical 9:16 (1080×1920)",
     },
   };
 }

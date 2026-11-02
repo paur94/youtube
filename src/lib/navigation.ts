@@ -7,6 +7,7 @@ import {
   ListVideoIcon,
   type LucideIcon,
   MegaphoneIcon,
+  MonitorPlayIcon,
   SendIcon,
   SettingsIcon,
   SmartphoneIcon,
@@ -60,6 +61,13 @@ export const MODULES = {
     description: "Keep recurring characters consistent across videos",
     ready: true,
   },
+  videos: {
+    href: "/videos",
+    label: "Video Studio",
+    icon: MonitorPlayIcon,
+    description: "Join a plan's scenes into one 16:9 video: trim, reorder, add transitions and captions, then review it",
+    ready: true,
+  },
   shorts: {
     href: "/shorts",
     label: "Shorts Studio",
@@ -79,7 +87,7 @@ export const MODULES = {
     href: "/publishing",
     label: "Publishing",
     icon: SendIcon,
-    description: "Schedule and publish approved Shorts to YouTube, only when you confirm each one",
+    description: "Schedule and publish approved videos and Shorts to YouTube, only when you confirm each one",
     ready: true,
   },
   analytics: {
@@ -112,6 +120,6 @@ export const NAV_GROUPS: { label: string; items: Module[] }[] = [
     label: "Create",
     items: [MODULES.ideas, MODULES.stories, MODULES.production, MODULES.characters],
   },
-  { label: "Distribute", items: [MODULES.shorts, MODULES.publishing, MODULES.playlists] },
+  { label: "Distribute", items: [MODULES.videos, MODULES.shorts, MODULES.publishing, MODULES.playlists] },
   { label: "Grow", items: [MODULES.analytics, MODULES.advertising] },
 ];

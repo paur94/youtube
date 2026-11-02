@@ -33,6 +33,7 @@ import {
   PLAN_STATUSES,
   SCENE_STATUSES,
 } from "../lib/production";
+import { type EditSettings, VIDEO_STATUSES, type VideoClip } from "../lib/long-video";
 import type { AudioLevels, MediaProbe } from "../lib/short-video";
 import { type CaptionCue, SHORT_STATUSES, type ShortAnalysis, type TrafficSource, type VideoSettings } from "../lib/shorts";
 import { REVISION_SOURCES, STORY_STATUSES, type StoryContent, type StoryScene } from "../lib/stories";
@@ -446,6 +447,58 @@ export const shortMetrics = pgTable(
 
 export type Short = typeof shorts.$inferSelect;
 export type ShortMetric = typeof shortMetrics.$inferSelect;
+
+// ---------- Video Studio ----------
+
+export const videoStatus = pgEnum("video_status", VIDEO_STATUSES);
+
+// A full-length 16:9 video joined from a plan's approved scene clips. The clips are referenced,
+// never modified: the render is a new file under MEDIA_DIR/videos/<video id>/.
+export const videos = pgTable(
+  "videos",
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    // Kept (set to null) when the plan or story is deleted; the clip snapshots below remain.
+    planId: uuid().references(() => productionPlans.id, { onDelete: "set null" }),
+    storyId: uuid().references(() => stories.id, { onDelete: "set null" }),
+    status: videoStatus().notNull().default("draft"),
+    clips: jsonb().$type<VideoClip[]>().notNull().default([]),
+    editSettings: jsonb().$type<EditSettings>().notNull(),
+    captionsReviewed: boolean().notNull().default(false),
+    title: text().notNull(),
+    description: text().notNull().default(""),
+    hashtags: text().array().notNull().default([]),
+    playlist: text().notNull().default(""),
+    notes: text().notNull().default(""),
+    metadataApprovedAt: timestamp({ withTimezone: true }),
+    renderFilePath: text(),
+    renderKey: text(),
+    renderedAt: timestamp({ withTimezone: true }),
+    renderError: text(),
+    // Set while FFmpeg runs in the background; also guards against two renders at once.
+    renderStartedAt: timestamp({ withTimezone: true }),
+    renderProgress: real(),
+    outputProbe: jsonb().$type<MediaProbe>(),
+    outputAudio: jsonb().$type<AudioLevels>(),
+    reviewNotes: text(),
+    reviewedAt: timestamp({ withTimezone: true }),
+    scheduledAt: timestamp({ withTimezone: true }),
+    publishedAt: timestamp({ withTimezone: true }),
+    youtubeUrl: text(),
+    youtubeVideoId: text(),
+    uploadStartedAt: timestamp({ withTimezone: true }),
+    publishError: text(),
+    publishFailedAt: timestamp({ withTimezone: true }),
+    createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp({ withTimezone: true })
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+  (t) => [index().on(t.status), index().on(t.planId)],
+);
+
+export type Video = typeof videos.$inferSelect;
 
 // ---------- YouTube ----------
 

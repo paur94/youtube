@@ -28,6 +28,38 @@ import {
   unmarkPublished,
   unscheduleShort,
 } from "@/server/actions/shorts";
+import {
+  markVideoPublished,
+  publishVideoToYouTube,
+  refreshVideoYouTubeStatus,
+  scheduleVideo,
+  unmarkVideoPublished,
+  unscheduleVideo,
+} from "@/server/actions/videos";
+
+// The same queue drives vertical Shorts and full-length 16:9 videos.
+const ACTIONS = {
+  short: {
+    noun: "Short",
+    linkPlaceholder: "https://youtube.com/shorts/…",
+    publish: publishShortToYouTube,
+    refresh: refreshYouTubeStatus,
+    schedule: scheduleShort,
+    unschedule: unscheduleShort,
+    markPublished,
+    unmarkPublished,
+  },
+  video: {
+    noun: "video",
+    linkPlaceholder: "https://www.youtube.com/watch?v=…",
+    publish: publishVideoToYouTube,
+    refresh: refreshVideoYouTubeStatus,
+    schedule: scheduleVideo,
+    unschedule: unscheduleVideo,
+    markPublished: markVideoPublished,
+    unmarkPublished: unmarkVideoPublished,
+  },
+};
 
 /** `datetime-local` value in the browser's time zone. */
 function toLocalInput(date: Date) {
@@ -37,13 +69,16 @@ function toLocalInput(date: Date) {
 
 export function QueueActions({
   shortId,
+  kind = "short",
   title,
   status,
   scheduledAt,
   uploaded,
   channelTitle,
 }: {
+  /** The Short's id, or the video's when `kind` is "video". */
   shortId: string;
+  kind?: keyof typeof ACTIONS;
   title: string;
   status: ShortStatus;
   scheduledAt: string | null;
@@ -63,6 +98,7 @@ export function QueueActions({
   const [url, setUrl] = useState("");
   const id = useId();
   const publishable = isPublishable(status) && !uploaded;
+  const a = ACTIONS[kind];
 
   function openUpload() {
     // YouTube needs some lead time for a scheduled publish; the server checks this again.
@@ -97,7 +133,7 @@ export function QueueActions({
             {scheduledAt ? "Reschedule" : "Schedule"}
           </Button>
           {scheduledAt && (
-            <Button size="sm" variant="ghost" disabled={pending} onClick={() => run(() => unscheduleShort(shortId))}>
+            <Button size="sm" variant="ghost" disabled={pending} onClick={() => run(() => a.unschedule(shortId))}>
               <CalendarXIcon />
               Unschedule
             </Button>
@@ -109,13 +145,13 @@ export function QueueActions({
         </>
       )}
       {uploaded && status !== "published" && (
-        <Button size="sm" variant="outline" disabled={pending} onClick={() => run(() => refreshYouTubeStatus(shortId))}>
+        <Button size="sm" variant="outline" disabled={pending} onClick={() => run(() => a.refresh(shortId))}>
           <RefreshCwIcon />
           Check YouTube
         </Button>
       )}
       {(status === "published" || uploaded) && (
-        <Button size="sm" variant="ghost" disabled={pending} onClick={() => run(() => unmarkPublished(shortId))}>
+        <Button size="sm" variant="ghost" disabled={pending} onClick={() => run(() => a.unmarkPublished(shortId))}>
           <Undo2Icon />
           {status === "published" ? "Not published" : "Forget upload"}
         </Button>
@@ -171,8 +207,8 @@ export function QueueActions({
               className="mt-0.5 size-3.5 shrink-0 accent-primary"
             />
             {mode === "now"
-              ? `I approve publishing this Short publicly on ${channelTitle} now.`
-              : `I approve uploading this Short to ${channelTitle} to go public at the scheduled time.`}
+              ? `I approve publishing this ${a.noun} publicly on ${channelTitle} now.`
+              : `I approve uploading this ${a.noun} to ${channelTitle} to go public at the scheduled time.`}
           </label>
           <DialogFooter>
             <Button variant="outline" disabled={pending} onClick={() => setUploadOpen(false)}>
@@ -180,7 +216,7 @@ export function QueueActions({
             </Button>
             <Button
               disabled={pending || !approved}
-              onClick={() => run(() => publishShortToYouTube(shortId, mode, approved), () => setUploadOpen(false))}
+              onClick={() => run(() => a.publish(shortId, mode, approved), () => setUploadOpen(false))}
             >
               <UploadIcon />
               {pending ? "Uploading…" : mode === "now" ? "Publish" : "Upload and schedule"}
@@ -194,7 +230,7 @@ export function QueueActions({
           <DialogHeader>
             <DialogTitle>Schedule</DialogTitle>
             <DialogDescription>
-              Records when this Short should go live. Nothing is uploaded until you choose “Upload to YouTube” (or upload it in
+              Records when this {a.noun} should go live. Nothing is uploaded until you choose “Upload to YouTube” (or upload it in
               YouTube Studio yourself).
             </DialogDescription>
           </DialogHeader>
@@ -208,7 +244,7 @@ export function QueueActions({
             </Button>
             <Button
               disabled={pending || !when}
-              onClick={() => run(() => scheduleShort(shortId, new Date(when).toISOString()), () => setScheduleOpen(false))}
+              onClick={() => run(() => a.schedule(shortId, new Date(when).toISOString()), () => setScheduleOpen(false))}
             >
               Save schedule
             </Button>
@@ -221,18 +257,19 @@ export function QueueActions({
           <DialogHeader>
             <DialogTitle>Mark as published</DialogTitle>
             <DialogDescription>
-              For Shorts you uploaded in YouTube Studio. Only do this after it is live: it locks the Short and enables analytics entry.
+              For {a.noun}s you uploaded in YouTube Studio. Only do this after it is live: it locks the {a.noun}
+              {kind === "short" && " and enables analytics entry"}.
             </DialogDescription>
           </DialogHeader>
           <div className="grid gap-1.5">
             <Label htmlFor={`${id}-url`}>YouTube link (optional)</Label>
-            <Input id={`${id}-url`} placeholder="https://youtube.com/shorts/…" value={url} onChange={(e) => setUrl(e.target.value)} />
+            <Input id={`${id}-url`} placeholder={a.linkPlaceholder} value={url} onChange={(e) => setUrl(e.target.value)} />
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setPublishOpen(false)}>
               Cancel
             </Button>
-            <Button disabled={pending} onClick={() => run(() => markPublished(shortId, url), () => setPublishOpen(false))}>
+            <Button disabled={pending} onClick={() => run(() => a.markPublished(shortId, url), () => setPublishOpen(false))}>
               Mark published
             </Button>
           </DialogFooter>
@@ -249,6 +286,7 @@ export function YouTubeMetadataButton({
   json,
   checklist,
   videoUrl,
+  videoLabel = "Vertical video (.mp4)",
   captionsUrl,
 }: {
   title: string;
@@ -257,6 +295,7 @@ export function YouTubeMetadataButton({
   json: string;
   checklist: string[];
   videoUrl: string | null;
+  videoLabel?: string;
   captionsUrl: string | null;
 }) {
   const [open, setOpen] = useState(false);
@@ -289,7 +328,7 @@ export function YouTubeMetadataButton({
                 <Button asChild size="sm" variant="outline">
                   <a href={videoUrl} download>
                     <DownloadIcon />
-                    Vertical video (.mp4)
+                    {videoLabel}
                   </a>
                 </Button>
               )}

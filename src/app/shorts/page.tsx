@@ -6,7 +6,7 @@ import { Suspense } from "react";
 
 import { PageHeader } from "@/components/page-header";
 import { QualitySummary, ShortStatusBadge, StandaloneBadge } from "@/components/shorts/badges";
-import { AnalyzeAllButton, ImportShortsButton, SuggestOrderButton } from "@/components/shorts/studio-actions";
+import { AnalyzeAllButton, ImportShortsButton, RemoveShortButton, SuggestOrderButton } from "@/components/shorts/studio-actions";
 import { Button } from "@/components/ui/button";
 import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -104,43 +104,46 @@ async function ShortsData() {
                     const preview = short.renderFilePath ?? short.sourceFilePath;
                     const sourceChanged = currentAssetId && short.sourceAssetId && currentAssetId !== short.sourceAssetId;
                     return (
-                      <Link
-                        key={short.id}
-                        href={`/shorts/${short.id}`}
-                        className="flex items-center gap-3 rounded-lg border p-2 transition-colors hover:border-primary/40"
-                      >
-                        <div className="w-10 shrink-0 text-center text-lg font-semibold text-muted-foreground tabular-nums" title="Publishing order">
-                          {short.publishOrder ?? "–"}
-                        </div>
-                        {preview ? (
-                          <video
-                            src={`${mediaUrl(preview)}#t=1`}
-                            muted
-                            preload="metadata"
-                            className={`h-20 shrink-0 rounded border bg-black object-cover ${short.renderFilePath ? "aspect-9/16" : "aspect-video"}`}
-                          />
-                        ) : (
-                          <div className="h-20 w-12 shrink-0 rounded border" />
-                        )}
-                        <div className="grid min-w-0 flex-1 gap-1">
-                          <p className="truncate font-medium">{short.title}</p>
-                          <p className="truncate text-xs text-muted-foreground">
-                            Scene {short.sceneNumber}: {short.sceneTitle}
-                            {short.publishOrderReason && ` · ${short.publishOrderReason}`}
-                          </p>
-                          <div className="flex flex-wrap items-center gap-1.5">
-                            <ShortStatusBadge status={short.status} />
-                            {short.analysis && <StandaloneBadge verdict={short.analysis.standalone.verdict} />}
-                            {sourceChanged && (
-                              <span className="inline-flex items-center gap-1 text-xs text-amber-400">
-                                <TriangleAlertIcon className="size-3" />
-                                Scene clip replaced
-                              </span>
-                            )}
-                            <QualitySummary summary={quality} />
+                      <div key={short.id} className="flex items-center gap-1 rounded-lg border p-2 pr-1 transition-colors hover:border-primary/40">
+                        <Link href={`/shorts/${short.id}`} className="flex min-w-0 flex-1 items-center gap-3">
+                          <div className="w-10 shrink-0 text-center text-lg font-semibold text-muted-foreground tabular-nums" title="Publishing order">
+                            {short.publishOrder ?? "–"}
                           </div>
-                        </div>
-                      </Link>
+                          {preview ? (
+                            <video
+                              src={`${mediaUrl(preview)}#t=1`}
+                              muted
+                              preload="metadata"
+                              className={`h-20 shrink-0 rounded border bg-black object-cover ${short.renderFilePath ? "aspect-9/16" : "aspect-video"}`}
+                            />
+                          ) : (
+                            <div className="h-20 w-12 shrink-0 rounded border" />
+                          )}
+                          <div className="grid min-w-0 flex-1 gap-1">
+                            <p className="truncate font-medium">{short.title}</p>
+                            <p className="truncate text-xs text-muted-foreground">
+                              Scene {short.sceneNumber}: {short.sceneTitle}
+                              {short.publishOrderReason && ` · ${short.publishOrderReason}`}
+                            </p>
+                            <div className="flex flex-wrap items-center gap-1.5">
+                              <ShortStatusBadge status={short.status} />
+                              {short.analysis && <StandaloneBadge verdict={short.analysis.standalone.verdict} />}
+                              {sourceChanged && (
+                                <span className="inline-flex items-center gap-1 text-xs text-amber-400">
+                                  <TriangleAlertIcon className="size-3" />
+                                  Scene clip replaced
+                                </span>
+                              )}
+                              <QualitySummary summary={quality} />
+                            </div>
+                          </div>
+                        </Link>
+                        <RemoveShortButton
+                          shortId={short.id}
+                          title={short.title}
+                          published={short.status === "published" || short.youtubeVideoId !== null}
+                        />
+                      </div>
                     );
                   })}
                 </CardContent>

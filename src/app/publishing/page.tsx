@@ -1,4 +1,4 @@
-import { InfoIcon, SmartphoneIcon, TriangleAlertIcon } from "lucide-react";
+import { InfoIcon, MonitorPlayIcon, SmartphoneIcon, TriangleAlertIcon } from "lucide-react";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { connection } from "next/server";
@@ -12,11 +12,13 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { computeTimeline, formatTimestamp, uploadDescription } from "@/lib/long-video";
 import { MODULES } from "@/lib/navigation";
 import { mediaUrl } from "@/lib/production";
 import { buildYouTubeMetadata, isOverdue, SHORT_STATUS_LABELS, SHORT_STATUSES } from "@/lib/shorts";
 import { getYouTubeConfig } from "@/server/providers/youtube";
 import { getPublishingQueue, getShortStatusCounts, isRenderCurrent } from "@/server/queries/shorts";
+import { getVideoPublishingQueue, isVideoRenderCurrent } from "@/server/queries/videos";
 import { getYouTubeConnection } from "@/server/youtube/connection";
 
 export const metadata: Metadata = { title: MODULES.publishing.label };
@@ -35,8 +37,9 @@ export default function PublishingPage() {
 async function QueueData() {
   await connection();
   const youtube = getYouTubeConfig();
-  const [queue, counts, channel] = await Promise.all([
+  const [queue, videoQueue, counts, channel] = await Promise.all([
     getPublishingQueue(),
+    getVideoPublishingQueue(),
     getShortStatusCounts(),
     youtube.configured ? getYouTubeConnection() : null,
   ]);
@@ -57,8 +60,8 @@ async function QueueData() {
       <div className="flex items-start gap-2 rounded-lg border bg-card p-3 text-sm text-muted-foreground">
         <InfoIcon className="mt-0.5 size-4 shrink-0 text-primary" />
         <p>
-          Nothing is published automatically. A Short reaches YouTube only when you choose “Upload to YouTube” and confirm it,
-          and only after it was approved in the Shorts Studio.{" "}
+          Nothing is published automatically. A video or Short reaches YouTube only when you choose “Upload to YouTube” and
+          confirm it, and only after it was approved in the Video Studio or Shorts Studio.{" "}
           {channel ? (
             <>
               Uploads go to <span className="font-medium text-foreground">{channel.channelTitle}</span>.
@@ -77,7 +80,139 @@ async function QueueData() {
 
       <Card>
         <CardHeader>
-          <CardTitle>Publishing queue</CardTitle>
+          <CardTitle>Videos (16:9)</CardTitle>
+          <CardDescription>Approved, scheduled, failed and published full-length videos. Review and approve drafts in the Video Studio.</CardDescription>
+        </CardHeader>
+        <CardContent>
+          {videoQueue.length === 0 ? (
+            <div className="flex flex-col items-center gap-3 py-8 text-center text-sm text-muted-foreground">
+              <p>No approved videos yet.</p>
+              <Button asChild variant="outline">
+                <Link href="/videos">
+                  <MonitorPlayIcon />
+                  Go to Video Studio
+                </Link>
+              </Button>
+            </div>
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Video</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead>When</TableHead>
+                  <TableHead className="text-right">Actions</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {videoQueue.map(({ video, planTitle, storyLanguage, madeForKids, containsSyntheticMedia }) => {
+                  const hasCaptions = video.clips.some((c) => c.captions.length > 0);
+                  const yt = buildYouTubeMetadata({
+                    title: video.title,
+                    description: uploadDescription(video),
+                    hashtags: video.hashtags,
+                    playlist: video.playlist,
+                    language: storyLanguage,
+                    madeForKids: madeForKids ?? true,
+                    containsSyntheticMedia: containsSyntheticMedia ?? true,
+                    scheduledAt: video.scheduledAt,
+                    hasCaptions,
+                    orientation: "horizontal 16:9 (1920×1080)",
+                  });
+                  const overdue = isOverdue(video.status, video.scheduledAt);
+                  const stale = !isVideoRenderCurrent(video);
+                  return (
+                    <TableRow key={video.id}>
+                      <TableCell className="max-w-72">
+                        <Link href={`/videos/${video.id}`} className="block truncate font-medium hover:underline">
+                          {video.title}
+                        </Link>
+                        <p className="truncate text-xs text-muted-foreground">
+                          {planTitle ?? "Plan deleted"} · {formatTimestamp(computeTimeline(video.clips, video.editSettings).total)}
+                          {video.playlist && ` · ${video.playlist}`}
+                        </p>
+                        {video.status === "failed" && video.publishError && (
+                          <p className="text-xs whitespace-normal text-orange-400">{video.publishError}</p>
+                        )}
+                        {stale && video.status !== "published" && (
+                          <p className="flex items-center gap-1 text-xs text-amber-400">
+                            <TriangleAlertIcon className="size-3" />
+                            Render out of date
+                          </p>
+                        )}
+                      </TableCell>
+                      <TableCell>
+                        <ShortStatusBadge status={video.status} />
+                      </TableCell>
+                      <TableCell className="text-sm">
+                        {video.status === "published" ? (
+                          <span>
+                            {video.publishedAt ? dateTimeFormat.format(video.publishedAt) : "Published"}
+                            {video.youtubeUrl && (
+                              <a href={video.youtubeUrl} target="_blank" rel="noreferrer" className="block text-xs text-primary hover:underline">
+                                Open on YouTube
+                              </a>
+                            )}
+                          </span>
+                        ) : video.scheduledAt ? (
+                          <span className={overdue ? "text-amber-400" : undefined}>
+                            {dateTimeFormat.format(video.scheduledAt)}
+                            <span className="block text-xs text-muted-foreground">
+                              {video.youtubeVideoId ? "Uploaded · YouTube publishes it" : "Not uploaded yet"}
+                            </span>
+                            {overdue && (
+                              <span className="block text-xs">{video.youtubeVideoId ? "Time passed: check YouTube" : "Time passed: published yet?"}</span>
+                            )}
+                          </span>
+                        ) : (
+                          <span className="text-muted-foreground">Not scheduled</span>
+                        )}
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex flex-wrap justify-end gap-1.5">
+                          <YouTubeMetadataButton
+                            title={yt.snippet.title}
+                            description={yt.snippet.description}
+                            tags={yt.snippet.tags.join(", ")}
+                            json={JSON.stringify(yt, null, 2)}
+                            checklist={[
+                              `Audience: ${yt.status.selfDeclaredMadeForKids ? "Yes, it's made for kids" : "No, it's not made for kids"}`,
+                              `Altered or synthetic content: ${yt.status.containsSyntheticMedia ? "Yes" : "No"}`,
+                              `Visibility: ${video.scheduledAt ? `Schedule for ${dateTimeFormat.format(video.scheduledAt)}` : "Private until you're ready"}`,
+                              ...(yt.extras.playlist ? [`Playlist: ${yt.extras.playlist}`] : []),
+                              ...(hasCaptions
+                                ? [video.editSettings.burnCaptions ? "Captions are burned in; uploading the .srt as well is optional" : "Upload the .srt as a caption track"]
+                                : []),
+                              "Pick a thumbnail in YouTube Studio",
+                              "Category: Film & Animation (or Education)",
+                            ]}
+                            videoUrl={video.renderFilePath ? mediaUrl(video.renderFilePath) : null}
+                            videoLabel="16:9 video (.mp4)"
+                            captionsUrl={hasCaptions ? `/api/videos/${video.id}/captions` : null}
+                          />
+                          <QueueActions
+                            shortId={video.id}
+                            kind="video"
+                            title={video.title}
+                            status={video.status}
+                            scheduledAt={video.scheduledAt?.toISOString() ?? null}
+                            uploaded={video.youtubeVideoId !== null}
+                            channelTitle={channel?.channelTitle ?? null}
+                          />
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Shorts</CardTitle>
           <CardDescription>Approved, scheduled, failed and published Shorts. Review and approve drafts in the Shorts Studio.</CardDescription>
         </CardHeader>
         <CardContent>

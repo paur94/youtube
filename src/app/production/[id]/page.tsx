@@ -194,7 +194,12 @@ async function PlanData({ params }: Pick<PageProps<"/production/[id]">, "params"
               <CardTitle>Final assembly</CardTitle>
             </CardHeader>
             <CardContent>
-              <AssemblyPanel planId={plan.id} status={plan.status} ready={isReadyForAssembly(plan.scenes)} />
+              <AssemblyPanel
+                planId={plan.id}
+                status={plan.status}
+                ready={isReadyForAssembly(plan.scenes)}
+                videoSceneIds={plan.scenes.filter((s) => s.status === "approved" && s.selected?.kind === "video").map((s) => s.id)}
+              />
             </CardContent>
           </Card>
 

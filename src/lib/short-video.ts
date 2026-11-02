@@ -131,7 +131,7 @@ export function buildRenderArgs(input: {
 
 // ---------- Burned-in captions and hook (ASS subtitles) ----------
 
-function assTime(seconds: number) {
+export function assTime(seconds: number) {
   const cs = Math.max(0, Math.round(seconds * 100));
   const h = Math.floor(cs / 360_000);
   const m = Math.floor((cs % 360_000) / 6000);

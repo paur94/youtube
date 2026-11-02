@@ -50,6 +50,13 @@
       "when": 1793358313247,
       "tag": "0006_youtube_publishing",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1793550438990,
+      "tag": "0007_video_studio",
+      "breakpoints": true
     }
   ]
 }

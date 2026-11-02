@@ -6,11 +6,13 @@ import {
   CheckCircle2Icon,
   ClapperboardIcon,
   Loader2Icon,
+  MonitorPlayIcon,
   PlusIcon,
+  SmartphoneIcon,
   Trash2Icon,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useEffect, useEffectEvent, useId, useRef, useState } from "react";
+import { useEffect, useEffectEvent, useId, useRef, useState, useTransition } from "react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -53,6 +55,8 @@ import {
   setPlanReady,
   updatePlanSettings,
 } from "@/server/actions/production";
+import { importShorts } from "@/server/actions/shorts";
+import { createVideo } from "@/server/actions/videos";
 
 import { useAction } from "./use-action";
 
@@ -275,18 +279,69 @@ export function PlanSettings({
   );
 }
 
-export function AssemblyPanel({ planId, status, ready }: { planId: string; status: PlanStatus; ready: boolean }) {
+export function AssemblyPanel({
+  planId,
+  status,
+  ready,
+  videoSceneIds,
+}: {
+  planId: string;
+  status: PlanStatus;
+  ready: boolean;
+  /** Scenes whose approved final asset is a video, the ones that can be combined or turned into Shorts. */
+  videoSceneIds: string[];
+}) {
   const [confirmed, setConfirmed] = useState(false);
   const [pending, run] = useAction();
+  const [creating, startCreate] = useTransition();
+  const router = useRouter();
+
+  function combine() {
+    startCreate(async () => {
+      try {
+        const result = await createVideo(planId);
+        if (!result.ok) {
+          toast.error(result.message);
+          return;
+        }
+        toast.success(result.message);
+        if (result.id) router.push(`/videos/${result.id}`);
+      } catch {
+        toast.error("Something went wrong. Please try again.");
+      }
+    });
+  }
 
   if (status === "ready_for_assembly") {
+    const clips = videoSceneIds.length;
     return (
       <div className="grid gap-3">
         <p className="flex items-start gap-2 text-sm">
           <CheckCircle2Icon className="mt-0.5 size-4 shrink-0 text-emerald-400" />
-          Every scene has a reviewed, approved final asset. Assembly and publishing are separate, manual steps.
+          Every scene has a reviewed, approved final asset. Choose how to publish it: one full video, separate Shorts, or both.
         </p>
-        <Button variant="outline" disabled={pending} onClick={() => run(() => setPlanReady(planId, false))}>
+        {clips === 0 ? (
+          <p className="text-xs text-muted-foreground">No scene has a video clip as its final asset yet, so there is nothing to assemble.</p>
+        ) : (
+          <>
+            <Button disabled={creating || pending} onClick={combine}>
+              <MonitorPlayIcon />
+              {creating ? "Creating…" : "Combine into one 16:9 video"}
+            </Button>
+            <Button
+              variant="outline"
+              disabled={creating || pending}
+              onClick={() => run(() => importShorts(videoSceneIds), () => router.push("/shorts"))}
+            >
+              <SmartphoneIcon />
+              Publish scenes as Shorts
+            </Button>
+            <p className="text-xs text-muted-foreground">
+              {clips} scene video{clips === 1 ? "" : "s"}. Both open a draft for review: nothing is uploaded until you approve and confirm it.
+            </p>
+          </>
+        )}
+        <Button variant="ghost" disabled={pending} onClick={() => run(() => setPlanReady(planId, false))}>
           Move back to production
         </Button>
       </div>

@@ -1,10 +1,11 @@
 import "server-only";
 
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
+import { buildConcatArgs, type EditSettings, parseProgressSeconds, pickFps, type VideoClip } from "@/lib/long-video";
 import { type AudioLevels, buildRenderArgs, type Framing, type MediaProbe, parseLoudness, parseProbe } from "@/lib/short-video";
 
 import { resolveMediaPath } from "./storage";
@@ -124,4 +125,90 @@ export async function renderVertical(input: {
   } finally {
     await rm(work, { recursive: true, force: true });
   }
+}
+
+/** A full-length render can take a while: allow an hour before giving up. */
+export const LONG_RENDER_TIMEOUT_MS = 60 * 60_000;
+
+/**
+ * Joins the clips into one 16:9 file under `folder`. The sources are only read. Reports the share
+ * of the timeline encoded so far through `onProgress` (0-1).
+ */
+export async function renderTimeline(input: {
+  clips: VideoClip[];
+  settings: EditSettings;
+  folder: string;
+  fileName: string;
+  assSubtitles: string | null;
+  onProgress?: (fraction: number) => void;
+  /** Aborting stops FFmpeg and deletes the partial file. */
+  signal?: AbortSignal;
+}) {
+  const relative = `${input.folder}/${input.fileName}`;
+  if (input.clips.some((c) => c.filePath === relative)) throw new FfmpegError("Refusing to overwrite a source clip");
+  const outputPath = absolute(relative);
+  await mkdir(path.dirname(outputPath), { recursive: true });
+
+  const work = await mkdtemp(path.join(tmpdir(), "kids-studio-video-"));
+  try {
+    if (input.assSubtitles) await writeFile(path.join(work, "captions.ass"), input.assSubtitles, "utf8");
+    const { args, durationSeconds } = buildConcatArgs({
+      clips: input.clips.map((c) => ({ ...c, inputPath: absolute(c.filePath) })),
+      settings: input.settings,
+      outputPath,
+      subtitlesFile: input.assSubtitles ? "captions.ass" : null,
+      fps: pickFps(input.clips),
+    });
+    await runWithProgress(getFfmpegPaths().ffmpeg, args, {
+      cwd: work,
+      timeout: LONG_RENDER_TIMEOUT_MS,
+      signal: input.signal,
+      onSeconds: (s) => input.onProgress?.(durationSeconds ? Math.min(1, s / durationSeconds) : 0),
+    });
+    const info = await stat(outputPath);
+    if (!info.size) throw new FfmpegError("FFmpeg produced an empty file");
+    return relative;
+  } catch (error) {
+    await rm(outputPath, { force: true }).catch(() => undefined);
+    throw error;
+  } finally {
+    await rm(work, { recursive: true, force: true });
+  }
+}
+
+/** Like `run`, but streams FFmpeg's `-progress pipe:1` output instead of buffering it. */
+function runWithProgress(
+  command: string,
+  args: string[],
+  options: { cwd: string; timeout: number; signal?: AbortSignal; onSeconds: (s: number) => void },
+) {
+  return new Promise<void>((resolve, reject) => {
+    const child = spawn(command, args, { cwd: options.cwd, windowsHide: true, stdio: ["ignore", "pipe", "pipe"], signal: options.signal });
+    let stderr = "";
+    const timer = setTimeout(() => child.kill("SIGKILL"), options.timeout);
+    child.stdout.setEncoding("utf8").on("data", (chunk: string) => {
+      const seconds = parseProgressSeconds(chunk);
+      if (seconds !== null) options.onSeconds(seconds);
+    });
+    // Only the tail is kept for the error message.
+    child.stderr.setEncoding("utf8").on("data", (chunk: string) => {
+      stderr = (stderr + chunk).slice(-8000);
+    });
+    child.on("error", (error: NodeJS.ErrnoException) => {
+      clearTimeout(timer);
+      if (error.name === "AbortError") return reject(new FfmpegError("Render cancelled"));
+      reject(
+        new FfmpegError(
+          error.code === "ENOENT"
+            ? `${path.basename(command)} was not found. Install FFmpeg or set FFMPEG_PATH and FFPROBE_PATH in .env.local.`
+            : `${path.basename(command)} failed: ${error.message}`,
+        ),
+      );
+    });
+    child.on("close", (code, signal) => {
+      clearTimeout(timer);
+      if (code === 0) resolve();
+      else reject(new FfmpegError(`${path.basename(command)} failed: ${lastLines(stderr) || (signal ? `stopped (${signal})` : `exit code ${code}`)}`));
+    });
+  });
 }
