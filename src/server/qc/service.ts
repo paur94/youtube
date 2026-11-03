@@ -3,10 +3,10 @@ import "server-only";
 import { readFile } from "node:fs/promises";
 
 import type Anthropic from "@anthropic-ai/sdk";
-import { and, asc, desc, eq, inArray } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, ne } from "drizzle-orm";
 
 import { db } from "@/db";
-import { assets, characters, productionPlans, productionScenes, sceneCharacters, shortGenerations } from "@/db/schema";
+import { assets, characters, productionPlans, productionScenes, sceneCharacters, shortGenerations, storyCharacters } from "@/db/schema";
 import {
   buildCorrectedPrompt,
   checkPlanRules,
@@ -290,7 +290,7 @@ export async function runVisionCheck(assetId: string, force = false): Promise<Qc
   const linked = links.filter((l) => l.sceneId === current.scene.id);
   const characterRefs = await pickCharacterReferences(linked);
   const sceneRefs = current.continuity.referenceAssetIds.length
-    ? await db.select().from(assets).where(and(inArray(assets.id, current.continuity.referenceAssetIds), eq(assets.status, "approved")))
+    ? await db.select().from(assets).where(and(inArray(assets.id, current.continuity.referenceAssetIds), ne(assets.status, "rejected")))
     : [];
   const refs = [
     ...characterRefs.map((r) => ({ label: `${r.names.join(" and ")} (character reference)`, asset: r.asset })),
@@ -563,26 +563,54 @@ export function consistencyPublishBlocker(result: Awaited<ReturnType<typeof eval
   return result?.status === "fail" ? `Story consistency: ${result.details[0] ?? "unresolved critical issues"}` : null;
 }
 
-/** Approved images that can be attached as scene references: keyframes from the plan and character references. */
-export async function getReferenceCandidates(planId: string, characterIds: string[]) {
+/**
+ * Images that can be attached as scene references: every image generated for the story (any scene,
+ * approved or still awaiting review) and the approved references of the story's characters.
+ * This scene's own images come first.
+ */
+export async function getReferenceCandidates(input: { planId: string; sceneId: string; storyId: string | null; characterIds: string[] }) {
+  const storyCast = input.storyId
+    ? (await db.select({ id: storyCharacters.characterId }).from(storyCharacters).where(eq(storyCharacters.storyId, input.storyId))).map((r) => r.id)
+    : [];
+  const castIds = [...new Set([...input.characterIds, ...storyCast])];
   const [sceneImages, characterImages] = await Promise.all([
     db
-      .select({ id: assets.id, revision: assets.revision, filePath: assets.filePath, sourceUrl: assets.sourceUrl, sceneTitle: productionScenes.title, position: productionScenes.position })
+      .select({
+        id: assets.id,
+        status: assets.status,
+        revision: assets.revision,
+        filePath: assets.filePath,
+        sourceUrl: assets.sourceUrl,
+        sceneId: productionScenes.id,
+        sceneTitle: productionScenes.title,
+        position: productionScenes.position,
+      })
       .from(assets)
       .innerJoin(productionScenes, eq(assets.sceneId, productionScenes.id))
-      .where(and(eq(productionScenes.planId, planId), eq(assets.kind, "image"), eq(assets.status, "approved")))
+      .where(and(eq(productionScenes.planId, input.planId), eq(assets.kind, "image"), ne(assets.status, "rejected")))
       .orderBy(asc(productionScenes.position), desc(assets.revision)),
-    characterIds.length
+    castIds.length
       ? db
-          .select({ id: assets.id, revision: assets.revision, filePath: assets.filePath, sourceUrl: assets.sourceUrl, name: characters.name })
+          .select({ id: assets.id, status: assets.status, revision: assets.revision, filePath: assets.filePath, sourceUrl: assets.sourceUrl, name: characters.name })
           .from(assets)
           .innerJoin(characters, eq(assets.characterId, characters.id))
-          .where(and(inArray(assets.characterId, characterIds), eq(assets.kind, "image"), eq(assets.status, "approved")))
+          .where(and(inArray(assets.characterId, castIds), eq(assets.kind, "image"), eq(assets.status, "approved")))
+          .orderBy(asc(characters.name), desc(assets.revision))
       : Promise.resolve([]),
   ]);
+  const own = sceneImages.filter((a) => a.sceneId === input.sceneId);
+  const others = sceneImages.filter((a) => a.sceneId !== input.sceneId);
   return [
-    ...sceneImages.map((a) => ({ id: a.id, filePath: a.filePath, sourceUrl: a.sourceUrl, label: `Scene ${a.position + 1} “${a.sceneTitle}” r${a.revision}` })),
-    ...characterImages.map((a) => ({ id: a.id, filePath: a.filePath, sourceUrl: a.sourceUrl, label: `${a.name} r${a.revision}` })),
+    ...own.map((a) => ({ id: a.id, status: a.status, filePath: a.filePath, sourceUrl: a.sourceUrl, group: "This scene", label: `r${a.revision}` })),
+    ...others.map((a) => ({
+      id: a.id,
+      status: a.status,
+      filePath: a.filePath,
+      sourceUrl: a.sourceUrl,
+      group: "Other scenes in this story",
+      label: `Scene ${a.position + 1} “${a.sceneTitle}” r${a.revision}`,
+    })),
+    ...characterImages.map((a) => ({ id: a.id, status: a.status, filePath: a.filePath, sourceUrl: a.sourceUrl, group: "Characters", label: `${a.name} r${a.revision}` })),
   ];
 }
 

@@ -44,6 +44,7 @@ export function GenerationPanel({
   concerns,
   startImages,
   characterReferences,
+  sceneReferenceCount,
   openManualJobs,
 }: {
   sceneId: string;
@@ -58,6 +59,8 @@ export function GenerationPanel({
   startImages: StartImage[];
   /** Linked characters and whether each has an approved reference image. */
   characterReferences: { name: string; hasReference: boolean }[];
+  /** Extra images picked under "Reference images" for this scene. */
+  sceneReferenceCount: number;
   openManualJobs: { id: string; outputKind: AssetKind; label: string }[];
 }) {
   const [kind, setKind] = useState<AssetKind>("image");
@@ -170,8 +173,8 @@ export function GenerationPanel({
                 </div>
               )}
             </div>
-            {model?.maxReferenceImages && characterReferences.length > 0 && (
-              <ReferenceNote characters={characterReferences} />
+            {model?.maxReferenceImages && (characterReferences.length > 0 || sceneReferenceCount > 0) && (
+              <ReferenceNote characters={characterReferences} sceneReferences={sceneReferenceCount} />
             )}
             {model?.output === "video" && (
               <p className="text-xs text-muted-foreground">
@@ -262,12 +265,23 @@ export function GenerationPanel({
   );
 }
 
-function ReferenceNote({ characters }: { characters: { name: string; hasReference: boolean }[] }) {
+function ReferenceNote({
+  characters,
+  sceneReferences,
+}: {
+  characters: { name: string; hasReference: boolean }[];
+  sceneReferences: number;
+}) {
   const withRef = characters.filter((c) => c.hasReference).map((c) => c.name);
   const missing = characters.filter((c) => !c.hasReference).map((c) => c.name);
   return (
     <div className="grid gap-1 text-xs text-muted-foreground">
       {withRef.length > 0 && <p>Sends reference images for {withRef.join(", ")} to keep them consistent.</p>}
+      {sceneReferences > 0 && (
+        <p>
+          Also sends {sceneReferences} scene reference image{sceneReferences === 1 ? "" : "s"} picked below.
+        </p>
+      )}
       {missing.length > 0 && (
         <p className="flex items-start gap-2 text-amber-300">
           <TriangleAlertIcon className="mt-0.5 size-3.5 shrink-0" />

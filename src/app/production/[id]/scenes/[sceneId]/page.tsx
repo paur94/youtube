@@ -14,10 +14,12 @@ import { GenerationPanel } from "@/components/production/generation-panel";
 import { JobList } from "@/components/production/job-list";
 import { DeleteSceneButton, JobPoller } from "@/components/production/plan-actions";
 import { SceneForm } from "@/components/production/scene-form";
+import { SceneReferencePicker } from "@/components/qc/qc-actions";
 import { SceneQcCard } from "@/components/qc/scene-qc-card";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
+import { HIGGSFIELD_MODELS } from "@/lib/higgsfield";
 import { MODULES } from "@/lib/navigation";
 import { buildGenerationPrompt, findPromptConcerns, POLLABLE_JOB_STATUSES } from "@/lib/production";
 import { getClaudeConfig } from "@/server/ai/claude";
@@ -27,6 +29,8 @@ import { generationBlockers, getReferenceCandidates, loadSceneQc } from "@/serve
 import { getCharacterOptions, getScene } from "@/server/queries/production";
 
 export const metadata: Metadata = { title: MODULES.production.label };
+
+const MAX_REFERENCE_IMAGES = Math.max(0, ...HIGGSFIELD_MODELS.map((m) => m.maxReferenceImages ?? 0));
 
 type Props = PageProps<"/production/[id]/scenes/[sceneId]">;
 
@@ -74,7 +78,12 @@ async function SceneData({ params }: Pick<Props, "params">) {
   if (!z.uuid().safeParse(id).success || !z.uuid().safeParse(sceneId).success) notFound();
   const [detail, characterOptions, qc] = await Promise.all([getScene(sceneId), getCharacterOptions(), loadSceneQc(sceneId)]);
   if (!detail || detail.plan.id !== id || !qc) notFound();
-  const referenceCandidates = await getReferenceCandidates(id, detail.characterIds);
+  const referenceCandidates = await getReferenceCandidates({
+    planId: id,
+    sceneId,
+    storyId: detail.plan.storyId,
+    characterIds: detail.characterIds,
+  });
   const claude = getClaudeConfig();
   const qcBlockers = generationBlockers(qc.current).map((i) => `Story QC: ${i.message}`);
   const assetQc = { specHash: qc.current.state.specHash, dismissed: qc.current.continuity.dismissed };
@@ -87,16 +96,23 @@ async function SceneData({ params }: Pick<Props, "params">) {
   const revisions = new Map(detail.assets.map((a) => [a.id, a.revision]));
   const activeApiJobs = detail.jobs.filter((j) => j.mode === "api" && POLLABLE_JOB_STATUSES.includes(j.status)).length;
 
+  const characterReferences = linked.map((c) => ({
+    name: c.name,
+    hasReference: detail.references.some((r) => r.characterId === c.id),
+  }));
+  const sceneReferenceIds = qc.current.continuity.referenceAssetIds.filter((refId) => referenceCandidates.some((c) => c.id === refId));
   const startImages = [
     ...detail.assets
       .filter((a) => a.kind === "image" && a.status === "approved")
       .map((a) => ({ id: a.id, label: `Scene keyframe r${a.revision}` })),
     ...detail.references.map((r) => ({ id: r.id, label: `${r.characterName} reference` })),
   ];
-  const characterReferences = linked.map((c) => ({
-    name: c.name,
-    hasReference: detail.references.some((r) => r.characterId === c.id),
-  }));
+  // Picked scene references can be start frames too, even while still awaiting review.
+  for (const ref of referenceCandidates.filter((c) => sceneReferenceIds.includes(c.id))) {
+    if (startImages.some((s) => s.id === ref.id)) continue;
+    const name = ref.group === "This scene" ? `this scene ${ref.label}` : ref.label;
+    startImages.push({ id: ref.id, label: `Reference: ${name}${ref.status === "approved" ? "" : " (needs review)"}` });
+  }
   const openManualJobs = detail.jobs
     .filter((j) => j.mode === "manual" && j.status === "awaiting_manual")
     .map((j) => ({ id: j.id, outputKind: j.outputKind, label: `job from ${toJobItem(j).createdAt}` }));
@@ -173,6 +189,7 @@ async function SceneData({ params }: Pick<Props, "params">) {
                 durationSeconds={scene.durationSeconds}
                 defaults={{ imageModel: plan.imageModel, videoModel: plan.videoModel }}
                 characterReferences={characterReferences}
+                sceneReferenceCount={sceneReferenceIds.length}
                 apiConfigured={higgsfield.configured}
                 hedraConfigured={getHedraConfig().configured}
                 prompt={prompt}
@@ -180,6 +197,25 @@ async function SceneData({ params }: Pick<Props, "params">) {
                 concerns={concerns}
                 startImages={startImages}
                 openManualJobs={openManualJobs}
+              />
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Reference images</CardTitle>
+              <CardDescription>
+                Pick images from anywhere in this story (a place, a prop, a keyframe you liked) to keep this scene
+                consistent with them. Images awaiting review can be used; rejected ones can&apos;t.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <SceneReferencePicker
+                key={qc.current.continuity.referenceAssetIds.join()}
+                sceneId={scene.id}
+                candidates={referenceCandidates}
+                selected={qc.current.continuity.referenceAssetIds}
+                maxReferenceImages={MAX_REFERENCE_IMAGES}
               />
             </CardContent>
           </Card>
@@ -196,7 +232,7 @@ async function SceneData({ params }: Pick<Props, "params">) {
         </div>
       </div>
 
-      <SceneQcCard qc={qc.current} candidates={referenceCandidates} />
+      <SceneQcCard qc={qc.current} />
 
       <Card>
         <CardHeader>

@@ -11,6 +11,7 @@ import { db } from "@/db";
 import { assets, productionPlans, productionScenes, shortGenerations, shorts, type Video, videos } from "@/db/schema";
 import {
   buildLandscapeAss,
+  captionMarginOf,
   clipLength,
   computeTimeline,
   DEFAULT_EDIT_SETTINGS,
@@ -352,7 +353,7 @@ async function runRender(video: Video, startedAt: Date, signal: AbortSignal) {
       settings,
       folder: `videos/${video.id}`,
       fileName: `${randomUUID()}.mp4`,
-      assSubtitles: cues.length ? buildLandscapeAss(cues) : null,
+      assSubtitles: cues.length ? buildLandscapeAss(cues, captionMarginOf(settings)) : null,
       signal,
       onProgress: (fraction) => {
         if (Date.now() - lastReport < 1500) return;

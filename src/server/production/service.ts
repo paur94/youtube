@@ -3,10 +3,12 @@ import "server-only";
 import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 
-import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, ne, sql } from "drizzle-orm";
 
 import { db } from "@/db";
 import {
+  type Asset,
+  type ProductionScene,
   assets,
   characters,
   generationJobs,
@@ -235,10 +237,24 @@ async function publicImageUrl(client: HiggsfieldClient, asset: typeof assets.$in
 export type SubmitOptions = {
   sceneId: string;
   modelId: string;
-  /** Approved image asset used as the first frame for image-to-video models. */
+  /** Image used as the first frame for image-to-video models; see startImageProblem. */
   startAssetId?: string | null;
   numImages?: number;
 };
+
+/**
+ * A start frame is an approved image of this scene, an approved character reference, or one of the
+ * scene's picked references (which may still be awaiting review, but not rejected).
+ */
+function startImageProblem(start: Asset | undefined, scene: Pick<ProductionScene, "id" | "continuity">) {
+  if (!start || start.kind !== "image") return "The start image must be an image";
+  const picked = readSceneContinuity(scene.continuity).referenceAssetIds.includes(start.id);
+  if (picked) return start.status === "rejected" ? "The start image was rejected" : null;
+  if (start.sceneId !== scene.id && !start.characterId) {
+    return "Use an image from this scene, a character reference or one of the scene's reference images";
+  }
+  return start.status === "approved" ? null : "The start image must be approved";
+}
 
 /** Submits an automated Higgsfield generation for a scene. */
 export async function submitApiGeneration(options: SubmitOptions): Promise<ServiceResult> {
@@ -273,12 +289,8 @@ export async function submitApiGeneration(options: SubmitOptions): Promise<Servi
   if (model.input === "image") {
     if (!options.startAssetId) return { ok: false, message: `${model.label} needs an approved start image` };
     const [start] = await db.select().from(assets).where(eq(assets.id, options.startAssetId));
-    if (!start || start.kind !== "image" || start.status !== "approved") {
-      return { ok: false, message: "The start image must be an approved image" };
-    }
-    if (start.sceneId !== scene.id && !start.characterId) {
-      return { ok: false, message: "Use an image from this scene or a character reference" };
-    }
+    const problem = startImageProblem(start, scene);
+    if (problem) return { ok: false, message: problem };
     try {
       imageUrl = (await publicImageUrl(client, start)) ?? undefined;
       if (!imageUrl) return { ok: false, message: "The start image file is missing" };
@@ -293,8 +305,9 @@ export async function submitApiGeneration(options: SubmitOptions): Promise<Servi
     // Extra scene references (props, places, keyframes) fill the remaining slots.
     const sceneRefIds = readSceneContinuity(scene.continuity).referenceAssetIds;
     const sceneRefs = sceneRefIds.length
-      ? (await db.select().from(assets).where(and(inArray(assets.id, sceneRefIds), eq(assets.kind, "image"), eq(assets.status, "approved"))))
+      ? (await db.select().from(assets).where(and(inArray(assets.id, sceneRefIds), eq(assets.kind, "image"), ne(assets.status, "rejected"))))
           .filter((a) => !refs.some((r) => r.asset.id === a.id))
+          .sort((a, b) => sceneRefIds.indexOf(a.id) - sceneRefIds.indexOf(b.id))
           .slice(0, model.maxReferenceImages - refs.length)
       : [];
     try {
@@ -419,12 +432,8 @@ export async function submitHedraGeneration(options: HedraSubmitOptions): Promis
   if (concerns.length) return { ok: false, message: `Edit the prompt before generating: ${concerns.join(". ")}.` };
 
   const [start] = await db.select().from(assets).where(eq(assets.id, options.startAssetId));
-  if (!start || start.kind !== "image" || start.status !== "approved") {
-    return { ok: false, message: "The start image must be an approved image" };
-  }
-  if (start.sceneId !== scene.id && !start.characterId) {
-    return { ok: false, message: "Use an image from this scene or a character reference" };
-  }
+  const startProblem = startImageProblem(start, scene);
+  if (startProblem) return { ok: false, message: startProblem };
   if (!start.filePath || !start.contentType || !resolveMediaPath(start.filePath)) {
     return { ok: false, message: "The start image file is missing" };
   }

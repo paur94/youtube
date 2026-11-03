@@ -67,12 +67,18 @@ export const editSettingsSchema = z.object({
   /** Fade in from and out to black at the very start and end. */
   fadeInOut: z.boolean(),
   burnCaptions: z.boolean(),
+  /** Burned-in captions' distance from the bottom, in pixels of the 1080p frame. Older edits don't have it. */
+  captionMargin: z.coerce.number().int().min(20).max(540).optional(),
   normalizeAudio: z.boolean(),
   /** Adds YouTube chapters (one per scene) to the description. */
   chapters: z.boolean(),
 });
 
 export type EditSettings = z.infer<typeof editSettingsSchema>;
+
+export const DEFAULT_CAPTION_MARGIN = 70;
+
+export const captionMarginOf = (settings: Pick<EditSettings, "captionMargin">) => settings.captionMargin ?? DEFAULT_CAPTION_MARGIN;
 
 export const DEFAULT_EDIT_SETTINGS: EditSettings = {
   transition: "crossfade",
@@ -163,6 +169,8 @@ export function videoRenderKey(clips: VideoClip[], settings: EditSettings) {
     background: settings.background,
     fade: settings.fadeInOut,
     captions: settings.burnCaptions,
+    // Left out at the default so renders made before the setting existed stay current.
+    captionMargin: settings.burnCaptions && captionMarginOf(settings) !== DEFAULT_CAPTION_MARGIN ? captionMarginOf(settings) : undefined,
     normalizeAudio: settings.normalizeAudio,
   });
 }
@@ -298,7 +306,7 @@ export function parseProgressSeconds(chunk: string) {
 export const LANDSCAPE_CAPTION_FONT_SIZE = 54;
 
 /** Burned-in captions for the 1920×1080 frame. */
-export function buildLandscapeAss(cues: CaptionCue[]) {
+export function buildLandscapeAss(cues: CaptionCue[], marginV = DEFAULT_CAPTION_MARGIN) {
   const header = [
     "[Script Info]",
     "ScriptType: v4.00+",
@@ -309,7 +317,7 @@ export function buildLandscapeAss(cues: CaptionCue[]) {
     "",
     "[V4+ Styles]",
     "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding",
-    `Style: Caption,Arial,${LANDSCAPE_CAPTION_FONT_SIZE},&H00FFFFFF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,4,2,2,160,160,70,1`,
+    `Style: Caption,Arial,${LANDSCAPE_CAPTION_FONT_SIZE},&H00FFFFFF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,4,2,2,160,160,${marginV},1`,
     "",
     "[Events]",
     "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",

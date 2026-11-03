@@ -4,6 +4,7 @@ import { ImagePlusIcon, RefreshCwIcon, ScanEyeIcon, ShieldCheckIcon, Undo2Icon, 
 import { useState } from "react";
 
 import { AssetPreview } from "@/components/production/asset-preview";
+import { AssetStatusBadge } from "@/components/production/badges";
 import { useAction } from "@/components/production/use-action";
 import {
   AlertDialog,
@@ -16,6 +17,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
+import type { AssetStatus } from "@/lib/production";
 import { cn } from "@/lib/utils";
 import {
   applySceneCorrections,
@@ -127,44 +129,80 @@ export function CorrectionButtons({ sceneId, canRestore }: { sceneId: string; ca
   );
 }
 
-export type ReferenceCandidate = { id: string; label: string; filePath: string | null; sourceUrl: string | null };
+export type ReferenceCandidate = {
+  id: string;
+  label: string;
+  /** Section heading, e.g. "This scene", "Other scenes in this story", "Characters". */
+  group: string;
+  status: AssetStatus;
+  filePath: string | null;
+  sourceUrl: string | null;
+};
 
 /** Extra reference images for a scene (props, places, keyframes), sent alongside character references. */
-export function SceneReferencePicker({ sceneId, candidates, selected }: { sceneId: string; candidates: ReferenceCandidate[]; selected: string[] }) {
-  const [picked, setPicked] = useState<string[]>(selected);
+export function SceneReferencePicker({
+  sceneId,
+  candidates,
+  selected,
+  maxReferenceImages,
+}: {
+  sceneId: string;
+  candidates: ReferenceCandidate[];
+  selected: string[];
+  /** Largest reference-image limit among the models, to warn when the pick won't all be sent. */
+  maxReferenceImages: number;
+}) {
+  // Rejected or deleted images drop out of the candidates; don't keep them selected.
+  const available = selected.filter((id) => candidates.some((c) => c.id === id));
+  const [picked, setPicked] = useState<string[]>(available);
   const [pending, run] = useAction();
   const dirty = picked.length !== selected.length || picked.some((id) => !selected.includes(id));
   if (!candidates.length) {
-    return <p className="text-sm text-muted-foreground">Approve keyframe images in this plan to use them as scene references.</p>;
+    return <p className="text-sm text-muted-foreground">Generate or import images in this story to use them as scene references.</p>;
   }
+  const groups = [...new Set(candidates.map((c) => c.group))];
   return (
-    <div className="grid gap-3">
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-        {candidates.map((c) => {
-          const on = picked.includes(c.id);
-          return (
-            <button
-              key={c.id}
-              type="button"
-              aria-pressed={on}
-              onClick={() => setPicked((p) => (on ? p.filter((x) => x !== c.id) : [...p, c.id]))}
-              className={cn(
-                "grid gap-1 rounded-md border p-1.5 text-left text-xs transition-colors",
-                on ? "border-primary bg-primary/10" : "hover:bg-muted/40",
-              )}
-            >
-              <AssetPreview kind="image" filePath={c.filePath} sourceUrl={c.sourceUrl} controls={false} />
-              <span className="line-clamp-2">{c.label}</span>
-            </button>
-          );
-        })}
-      </div>
-      <div className="flex items-center gap-2">
-        <Button size="sm" disabled={!dirty || pending} onClick={() => run(() => setSceneReferences(sceneId, picked))}>
-          <ImagePlusIcon />
-          Save references ({picked.length})
-        </Button>
-        <p className="text-xs text-muted-foreground">Used by reference-image models after the character references, and by the vision check.</p>
+    <div className="grid gap-4">
+      {groups.map((group) => (
+        <section key={group} className="grid gap-2">
+          <h4 className="text-xs font-medium text-muted-foreground">{group}</h4>
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+            {candidates
+              .filter((c) => c.group === group)
+              .map((c) => {
+                const on = picked.includes(c.id);
+                return (
+                  <button
+                    key={c.id}
+                    type="button"
+                    aria-pressed={on}
+                    onClick={() => setPicked((p) => (on ? p.filter((x) => x !== c.id) : [...p, c.id]))}
+                    className={cn(
+                      "grid content-start gap-1 rounded-md border p-1.5 text-left text-xs transition-colors",
+                      on ? "border-primary bg-primary/10" : "hover:bg-muted/40",
+                    )}
+                  >
+                    <AssetPreview kind="image" filePath={c.filePath} sourceUrl={c.sourceUrl} controls={false} />
+                    <span className="line-clamp-2">{c.label}</span>
+                    {c.status !== "approved" && <AssetStatusBadge status={c.status} />}
+                  </button>
+                );
+              })}
+          </div>
+        </section>
+      ))}
+      <div className="grid gap-1">
+        <div className="flex flex-wrap items-center gap-2">
+          <Button size="sm" disabled={!dirty || pending || picked.length > 8} onClick={() => run(() => setSceneReferences(sceneId, picked))}>
+            <ImagePlusIcon />
+            Save references ({picked.length})
+          </Button>
+          {picked.length > 8 && <p className="text-xs text-rose-300">Pick at most 8.</p>}
+        </div>
+        <p className="text-xs text-muted-foreground">
+          Sent to reference-image models after the character references, in the order picked, and used by the vision check.
+          {maxReferenceImages > 0 && ` Models take up to ${maxReferenceImages} images in total, so extras are dropped.`}
+        </p>
       </div>
     </div>
   );

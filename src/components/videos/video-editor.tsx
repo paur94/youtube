@@ -6,6 +6,7 @@ import {
   BanIcon,
   CaptionsIcon,
   FilmIcon,
+  MaximizeIcon,
   PlusIcon,
   RefreshCwIcon,
   SaveIcon,
@@ -24,12 +25,16 @@ import { Textarea } from "@/components/ui/textarea";
 import {
   clipLength,
   computeTimeline,
+  captionMarginOf,
   type EditSettings,
   formatTimestamp,
+  LANDSCAPE_CAPTION_FONT_SIZE,
   MIN_CLIP_SECONDS,
   type Transition,
   TRANSITION_LABELS,
   TRANSITIONS,
+  VIDEO_H,
+  VIDEO_W,
   type VideoClip,
 } from "@/lib/long-video";
 import { mediaUrl } from "@/lib/production";
@@ -278,6 +283,7 @@ export function VideoEditor(props: VideoEditorProps) {
                   <ClipDetail
                     id={`${id}-${clip.assetId}`}
                     clip={clip}
+                    captionMargin={captionMarginOf(settings)}
                     disabled={disabled}
                     errors={[...(parsed?.errors ?? []), ...issues.map((x) => x.message)]}
                     onChange={(patch) => {
@@ -351,6 +357,26 @@ export function VideoEditor(props: VideoEditorProps) {
           <Toggle label="Burn captions into the picture" checked={settings.burnCaptions} disabled={disabled} onChange={(v) => set("burnCaptions", v)} />
           <Toggle label="Add scene chapters to the description" checked={settings.chapters} disabled={disabled} onChange={(v) => set("chapters", v)} />
         </div>
+        {settings.burnCaptions && (
+          <div className="grid max-w-sm gap-1">
+            <div className="flex justify-between">
+              <Label htmlFor={`${id}-cpos`}>Caption height</Label>
+              <span className="text-xs text-muted-foreground tabular-nums">{Math.round((captionMarginOf(settings) / VIDEO_H) * 100)}% from the bottom</span>
+            </div>
+            <input
+              id={`${id}-cpos`}
+              type="range"
+              min={20}
+              max={540}
+              step={10}
+              value={captionMarginOf(settings)}
+              disabled={disabled}
+              onChange={(e) => set("captionMargin", Number(e.target.value))}
+              className="accent-primary"
+            />
+            <p className="text-xs text-muted-foreground">Open a scene&apos;s Trim & captions to see where they land.</p>
+          </div>
+        )}
         <label className="flex items-start gap-2">
           <input
             type="checkbox"
@@ -396,24 +422,89 @@ export function VideoEditor(props: VideoEditorProps) {
 function ClipDetail({
   id,
   clip,
+  captionMargin,
   disabled,
   errors,
   onChange,
 }: {
   id: string;
   clip: EditorClip;
+  captionMargin: number;
   disabled: boolean;
   errors: string[];
   onChange: (patch: Partial<EditorClip>) => void;
 }) {
   const player = useRef<HTMLVideoElement>(null);
+  const frame = useRef<HTMLDivElement>(null);
+  const stage = useRef<HTMLDivElement>(null);
+  const [time, setTime] = useState(0);
+  const [stageWidth, setStageWidth] = useState(0);
+  const [fullscreen, setFullscreen] = useState(false);
   const here = () => round1(player.current?.currentTime ?? 0);
   const end = clip.trimEnd ?? clip.sourceSeconds;
+
+  useEffect(() => {
+    const el = stage.current;
+    if (!el) return;
+    const observer = new ResizeObserver(([entry]) => setStageWidth(entry.contentRect.width));
+    observer.observe(el);
+    const onChange = () => setFullscreen(document.fullscreenElement === frame.current);
+    document.addEventListener("fullscreenchange", onChange);
+    return () => {
+      observer.disconnect();
+      document.removeEventListener("fullscreenchange", onChange);
+    };
+  }, []);
+
+  // Cues are timed against the source clip, so the player's own clock lines up with them.
+  const cue = clip.captionsText === null ? undefined : parseCaptionLines(clip.captionsText).cues.find((c) => time >= c.start && time < c.end);
+  const unit = stageWidth / VIDEO_W;
 
   return (
     <div className="grid gap-4 border-t p-3 md:grid-cols-2">
       <div className="grid content-start gap-2">
-        <video ref={player} src={mediaUrl(clip.filePath)} controls preload="metadata" className="aspect-video w-full rounded border bg-black" />
+        {/* The frame goes full screen rather than the <video>, which would leave the caption overlay behind. */}
+        <div ref={frame} className={cn("relative", fullscreen && "flex items-center justify-center bg-black")}>
+          <div ref={stage} className="relative aspect-video" style={{ width: fullscreen ? "min(100vw, calc(100vh * 16 / 9))" : "100%" }}>
+            <video
+              ref={player}
+              src={mediaUrl(clip.filePath)}
+              controls
+              controlsList="nofullscreen"
+              preload="metadata"
+              onTimeUpdate={(e) => setTime(e.currentTarget.currentTime)}
+              onSeeked={(e) => setTime(e.currentTarget.currentTime)}
+              onDoubleClick={() => void (fullscreen ? document.exitFullscreen() : frame.current?.requestFullscreen())}
+              className={cn("size-full bg-black", !fullscreen && "rounded border")}
+            />
+            {cue && unit > 0 && (
+              // Same size, outline and margins as the burned-in style in buildLandscapeAss.
+              <p
+                className="pointer-events-none absolute inset-x-[8.33%] text-center leading-tight font-bold text-white"
+                style={{
+                  bottom: `${(captionMargin / VIDEO_H) * 100}%`,
+                  fontSize: LANDSCAPE_CAPTION_FONT_SIZE * unit,
+                  WebkitTextStroke: `${unit * 8}px black`,
+                  paintOrder: "stroke",
+                  textShadow: `${unit * 2}px ${unit * 2}px 0 rgb(0 0 0 / 0.5)`,
+                }}
+              >
+                {cue.text}
+              </p>
+            )}
+            <Button
+              type="button"
+              variant="secondary"
+              size="icon"
+              className="absolute top-2 right-2 size-7 opacity-80"
+              aria-label={fullscreen ? "Exit full screen" : "Full screen"}
+              onClick={() => void (fullscreen ? document.exitFullscreen() : frame.current?.requestFullscreen())}
+            >
+              <MaximizeIcon />
+            </Button>
+          </div>
+        </div>
+        <p className="text-xs text-muted-foreground">Captions are previewed live over the clip; nothing is rendered until you render the video.</p>
         <div className="grid grid-cols-2 gap-2">
           <div className="grid gap-1">
             <Label htmlFor={`${id}-start`}>Start (s)</Label>

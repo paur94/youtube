@@ -2,11 +2,11 @@ import { CardAction, Card, CardContent, CardDescription, CardHeader, CardTitle }
 import { describeShots, type SceneContinuity } from "@/lib/story-qc";
 import type { SceneQc } from "@/server/qc/service";
 
-import { CorrectionButtons, type ReferenceCandidate, SceneReferencePicker } from "./qc-actions";
+import { CorrectionButtons } from "./qc-actions";
 import { IssueCounts, QcIssueList } from "./qc-issue-list";
 
-/** Pre-generation QC for one scene: script issues, shot list, corrections and extra reference images. */
-export function SceneQcCard({ qc, candidates }: { qc: SceneQc; candidates: ReferenceCandidate[] }) {
+/** Pre-generation QC for one scene: script issues, shot list and corrections. */
+export function SceneQcCard({ qc }: { qc: SceneQc }) {
   const c: SceneContinuity = qc.continuity;
   const pf = c.preflight;
   const settled = [...c.dismissed, ...(c.corrected ?? [])];
@@ -42,10 +42,6 @@ export function SceneQcCard({ qc, candidates }: { qc: SceneQc; candidates: Refer
             ) : (
               <p className="text-sm text-muted-foreground">Created by the Claude story check. The vision check inspects one frame per shot.</p>
             )}
-          </section>
-          <section className="grid gap-2">
-            <h3 className="text-sm font-medium">Scene reference images</h3>
-            <SceneReferencePicker sceneId={qc.scene.id} candidates={candidates} selected={c.referenceAssetIds} />
           </section>
         </div>
       </CardContent>

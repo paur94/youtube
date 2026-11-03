@@ -164,7 +164,10 @@ export async function dismissQcIssue(sceneId: string, issueId: string, dismissed
   });
 }
 
-/** Extra reference images for a scene: approved images from the same plan or character references. */
+/**
+ * Extra reference images for a scene: any image of the same story that wasn't rejected (approved or
+ * awaiting review), or an approved character reference.
+ */
 export async function setSceneReferences(sceneId: string, assetIds: string[]): Promise<ActionResult> {
   const id = idSchema.safeParse(sceneId);
   const ids = z.array(idSchema).max(8, "Use at most 8 scene references").safeParse(assetIds);
@@ -181,8 +184,12 @@ export async function setSceneReferences(sceneId: string, assetIds: string[]): P
         .leftJoin(productionScenes, eq(assets.sceneId, productionScenes.id))
         .leftJoin(characters, eq(assets.characterId, characters.id))
         .where(inArray(assets.id, unique));
-      const ok = rows.filter((r) => r.kind === "image" && r.status === "approved" && (r.planId === planId || r.characterId));
-      if (ok.length !== unique.length) return { ok: false, message: "References must be approved images from this plan or a character" };
+      const ok = rows.filter(
+        (r) => r.kind === "image" && ((r.planId === planId && r.status !== "rejected") || (r.characterId && r.status === "approved")),
+      );
+      if (ok.length !== unique.length) {
+        return { ok: false, message: "References must be images from this story that weren't rejected, or approved character references" };
+      }
     }
     await updateSceneContinuity(id.data, (c) => ({ ...c, referenceAssetIds: unique }));
     revalidateQc(planId, id.data);
