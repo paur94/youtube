@@ -24,7 +24,7 @@ import { AGE_GROUP_LABELS } from "@/lib/ideas";
 import { MODULES } from "@/lib/navigation";
 import { formatDuration } from "@/lib/stories";
 import { getClaudeConfig } from "@/server/ai/claude";
-import { getPlanIdForStory } from "@/server/queries/production";
+import { getCharacterOptions, getPlanIdForStory } from "@/server/queries/production";
 import {
   getIdeaOptions,
   getStory,
@@ -59,7 +59,7 @@ function StorySkeleton() {
       <Skeleton className="h-12 w-2/3 rounded-lg" />
       <div className="grid gap-6 lg:grid-cols-3">
         <Skeleton className="h-[32rem] rounded-xl lg:col-span-2" />
-        <div className="grid content-start gap-6">
+        <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] content-start gap-6">
           <Skeleton className="h-40 rounded-xl" />
           <Skeleton className="h-64 rounded-xl" />
         </div>
@@ -76,11 +76,12 @@ async function StoryData({ params }: Pick<PageProps<"/stories/[id]">, "params">)
   const story = await getStory(id);
   if (!story) notFound();
 
-  const [revisions, generations, ideas, planId] = await Promise.all([
+  const [revisions, generations, ideas, planId, library] = await Promise.all([
     getStoryRevisions(id),
     getStoryGenerations(id),
     getIdeaOptions(),
     getPlanIdForStory(id),
+    getCharacterOptions(),
   ]);
   const claude = getClaudeConfig();
   const usage = summarizeUsage(generations);
@@ -106,15 +107,15 @@ async function StoryData({ params }: Pick<PageProps<"/stories/[id]">, "params">)
         icon={MODULES.stories.icon}
       >
         <StoryStatusBadge status={story.status} />
-        {(planId || story.status === "approved") && (
+        {planId && (
           <Button asChild variant="outline">
-            <Link href={planId ? `/production/${planId}` : "/production"}>
+            <Link href={`/production/${planId}`}>
               <ClapperboardIcon />
-              {planId ? "Production plan" : "Start production"}
+              Production plan
             </Link>
           </Button>
         )}
-        <EditBriefButton story={story} ideas={ideas} />
+        <EditBriefButton story={story} ideas={ideas} library={library} />
         <DeleteStoryButton storyId={story.id} title={story.content?.title ?? story.title} />
       </PageHeader>
 
@@ -129,7 +130,7 @@ async function StoryData({ params }: Pick<PageProps<"/stories/[id]">, "params">)
           />
         </div>
 
-        <div className="grid content-start gap-6">
+        <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] content-start gap-6">
           <Card>
             <CardHeader>
               <CardTitle>Production approval</CardTitle>
@@ -140,6 +141,7 @@ async function StoryData({ params }: Pick<PageProps<"/stories/[id]">, "params">)
                 status={story.status}
                 hasContent={story.content !== null}
                 approvedAt={story.approvedAt ? dateTimeFormat.format(story.approvedAt) : null}
+                planId={planId}
               />
             </CardContent>
           </Card>

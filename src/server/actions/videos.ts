@@ -34,6 +34,7 @@ import { getClaudeClient, getClaudeConfig, NOT_CONFIGURED_MESSAGE, runStructured
 import { buildVideoMetadataPrompt } from "@/server/ai/video-prompt";
 import { FfmpegError, getFfmpegVersion, measureLoudness, probeMedia, renderTimeline } from "@/server/media/ffmpeg";
 import { resolveMediaPath } from "@/server/media/storage";
+import { markIdeaPublished } from "@/server/pipeline";
 import { consistencyPublishBlocker, videoConsistency } from "@/server/qc/service";
 import { getYouTubeConfig, YouTubeError } from "@/server/providers/youtube";
 import { buildVideoQualityInput, getVideo, getVideoPublishContext, isRenderRunning, isVideoRenderCurrent, RENDER_STALE_MS } from "@/server/queries/videos";
@@ -767,6 +768,7 @@ export async function publishVideoToYouTube(id: string, mode: "now" | "schedule"
       return { ok: false, message: `Uploaded to YouTube (video ${uploaded.id}), but saving that here failed. Don't upload it again: mark it published with that link.` };
     }
     claimed = false;
+    if (now) await markIdeaPublished(video.storyId);
     revalidateVideos(video.id);
 
     // Projects that haven't passed Google's API audit get their uploads locked to private.
@@ -807,6 +809,7 @@ export async function refreshVideoYouTubeStatus(id: string): Promise<ActionResul
         .update(videos)
         .set({ status: "published", publishedAt: video.scheduledAt && video.scheduledAt < new Date() ? video.scheduledAt : new Date() })
         .where(eq(videos.id, video.id));
+      await markIdeaPublished(video.storyId);
       revalidateVideos(video.id);
       return { ok: true, message: "It's live: marked as published" };
     }
@@ -845,6 +848,7 @@ export async function markVideoPublished(id: string, url: string): Promise<Actio
         publishFailedAt: null,
       })
       .where(eq(videos.id, video.id));
+    await markIdeaPublished(video.storyId);
     revalidateVideos(video.id);
     return { ok: true, message: "Marked as published" };
   });

@@ -40,6 +40,7 @@ import {
 import { buildPublishOrderPrompt, buildShortAnalysisPrompt } from "@/server/ai/shorts-prompt";
 import { FfmpegError, getFfmpegVersion, measureLoudness, probeMedia, renderVertical } from "@/server/media/ffmpeg";
 import { resolveMediaPath } from "@/server/media/storage";
+import { markIdeaPublished } from "@/server/pipeline";
 import { consistencyPublishBlocker, shortConsistency } from "@/server/qc/service";
 import { getYouTubeConfig, YouTubeError } from "@/server/providers/youtube";
 import { buildQualityInput, getShort, getShortPublishContext, isRenderCurrent } from "@/server/queries/shorts";
@@ -797,6 +798,7 @@ export async function publishShortToYouTube(id: string, mode: "now" | "schedule"
       return { ok: false, message: `Uploaded to YouTube (video ${video.id}), but saving that here failed. Don't upload it again: mark it published with that link.` };
     }
     claimed = false;
+    if (now) await markIdeaPublished(short.storyId);
     revalidateShorts(short.id);
 
     // Projects that haven't passed Google's API audit get their uploads locked to private.
@@ -839,6 +841,7 @@ export async function refreshYouTubeStatus(id: string): Promise<ActionResult> {
         .update(shorts)
         .set({ status: "published", publishedAt: short.scheduledAt && short.scheduledAt < new Date() ? short.scheduledAt : new Date() })
         .where(eq(shorts.id, short.id));
+      await markIdeaPublished(short.storyId);
       revalidateShorts(short.id);
       return { ok: true, message: "It's live: marked as published" };
     }
@@ -877,6 +880,7 @@ export async function markPublished(id: string, url: string): Promise<ActionResu
         publishFailedAt: null,
       })
       .where(eq(shorts.id, short.id));
+    await markIdeaPublished(short.storyId);
     revalidateShorts(short.id);
     return { ok: true, message: "Marked as published. Add its numbers on the Analytics page." };
   });

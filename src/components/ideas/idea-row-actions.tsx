@@ -34,7 +34,7 @@ import type { Idea } from "@/db/schema";
 import { IDEA_STATUSES, STATUS_LABELS } from "@/lib/ideas";
 import { deleteIdea, setIdeaStatus } from "@/server/actions/ideas";
 
-export function IdeaRowActions({ idea }: { idea: Idea }) {
+export function IdeaRowActions({ idea }: { idea: Idea & { storyId: string | null } }) {
   const [editOpen, setEditOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [pending, startTransition] = useTransition();
@@ -62,7 +62,13 @@ export function IdeaRowActions({ idea }: { idea: Idea }) {
   }
 
   return (
-    <>
+    <div className="flex items-center justify-end gap-1">
+      <Button asChild variant="outline" size="sm" className="hidden sm:inline-flex">
+        <Link href={idea.storyId ? `/stories/${idea.storyId}` : `/stories/new?idea=${idea.id}`}>
+          <BookOpenIcon />
+          {idea.storyId ? "Open story" : "Develop story"}
+        </Link>
+      </Button>
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <Button variant="ghost" size="icon-sm" disabled={pending} aria-label="Idea actions">
@@ -77,7 +83,7 @@ export function IdeaRowActions({ idea }: { idea: Idea }) {
           <DropdownMenuItem asChild>
             <Link href={`/stories/new?idea=${idea.id}`}>
               <BookOpenIcon />
-              Start story
+              {idea.storyId ? "Start another story" : "Develop story"}
             </Link>
           </DropdownMenuItem>
           <DropdownMenuSub>
@@ -119,6 +125,6 @@ export function IdeaRowActions({ idea }: { idea: Idea }) {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-    </>
+    </div>
   );
 }

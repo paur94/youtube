@@ -44,7 +44,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { HIGGSFIELD_MODELS } from "@/lib/higgsfield";
-import { ASPECT_RATIOS, type PlanStatus } from "@/lib/production";
+import { ASPECT_RATIOS } from "@/lib/production";
 import {
   addScene,
   createProductionPlan,
@@ -52,7 +52,6 @@ import {
   deleteScene,
   moveScene,
   refreshJobs,
-  setPlanReady,
   updatePlanSettings,
 } from "@/server/actions/production";
 import { importShorts } from "@/server/actions/shorts";
@@ -281,17 +280,15 @@ export function PlanSettings({
 
 export function AssemblyPanel({
   planId,
-  status,
   ready,
   videoSceneIds,
 }: {
   planId: string;
-  status: PlanStatus;
+  /** Every scene has a reviewed, approved final asset. */
   ready: boolean;
   /** Scenes whose approved final asset is a video, the ones that can be combined or turned into Shorts. */
   videoSceneIds: string[];
 }) {
-  const [confirmed, setConfirmed] = useState(false);
   const [pending, run] = useAction();
   const [creating, startCreate] = useTransition();
   const router = useRouter();
@@ -312,41 +309,6 @@ export function AssemblyPanel({
     });
   }
 
-  if (status === "ready_for_assembly") {
-    const clips = videoSceneIds.length;
-    return (
-      <div className="grid gap-3">
-        <p className="flex items-start gap-2 text-sm">
-          <CheckCircle2Icon className="mt-0.5 size-4 shrink-0 text-emerald-400" />
-          Every scene has a reviewed, approved final asset. Choose how to publish it: one full video, separate Shorts, or both.
-        </p>
-        {clips === 0 ? (
-          <p className="text-xs text-muted-foreground">No scene has a video clip as its final asset yet, so there is nothing to assemble.</p>
-        ) : (
-          <>
-            <Button disabled={creating || pending} onClick={combine}>
-              <MonitorPlayIcon />
-              {creating ? "Creating…" : "Combine into one 16:9 video"}
-            </Button>
-            <Button
-              variant="outline"
-              disabled={creating || pending}
-              onClick={() => run(() => importShorts(videoSceneIds), () => router.push("/shorts"))}
-            >
-              <SmartphoneIcon />
-              Publish scenes as Shorts
-            </Button>
-            <p className="text-xs text-muted-foreground">
-              {clips} scene video{clips === 1 ? "" : "s"}. Both open a draft for review: nothing is uploaded until you approve and confirm it.
-            </p>
-          </>
-        )}
-        <Button variant="ghost" disabled={pending} onClick={() => run(() => setPlanReady(planId, false))}>
-          Move back to production
-        </Button>
-      </div>
-    );
-  }
   if (!ready) {
     return (
       <p className="text-sm text-muted-foreground">
@@ -355,22 +317,34 @@ export function AssemblyPanel({
       </p>
     );
   }
+  const clips = videoSceneIds.length;
   return (
     <div className="grid gap-3">
-      <label className="flex items-start gap-2 text-sm">
-        <input
-          type="checkbox"
-          checked={confirmed}
-          onChange={(e) => setConfirmed(e.target.checked)}
-          className="mt-0.5 size-4 shrink-0 rounded border-input accent-primary"
-        />
-        I have watched every final asset and checked it for safety, age-appropriateness and originality.
-      </label>
-      <Button disabled={!confirmed || pending} onClick={() => run(() => setPlanReady(planId, true))}>
-        <CheckCircle2Icon />
-        Mark ready for assembly
-      </Button>
-      <p className="text-xs text-muted-foreground">Nothing is rendered, uploaded or published.</p>
+      <p className="flex items-start gap-2 text-sm">
+        <CheckCircle2Icon className="mt-0.5 size-4 shrink-0 text-emerald-400" />
+        Every scene has a reviewed, approved final asset. Choose how to publish it: one full video, separate Shorts, or both.
+      </p>
+      {clips === 0 ? (
+        <p className="text-xs text-muted-foreground">No scene has a video clip as its final asset yet, so there is nothing to assemble.</p>
+      ) : (
+        <>
+          <Button disabled={creating || pending} onClick={combine}>
+            <MonitorPlayIcon />
+            {creating ? "Creating…" : "Combine into one 16:9 video"}
+          </Button>
+          <Button
+            variant="outline"
+            disabled={creating || pending}
+            onClick={() => run(() => importShorts(videoSceneIds), () => router.push("/shorts"))}
+          >
+            <SmartphoneIcon />
+            Publish scenes as Shorts
+          </Button>
+          <p className="text-xs text-muted-foreground">
+            {clips} scene video{clips === 1 ? "" : "s"}. Both open a draft for review: nothing is uploaded until you approve and confirm it.
+          </p>
+        </>
+      )}
     </div>
   );
 }

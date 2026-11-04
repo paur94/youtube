@@ -1,6 +1,15 @@
 "use client";
 
-import { CheckCircle2Icon, HistoryIcon, PencilIcon, RotateCcwIcon, Trash2Icon } from "lucide-react";
+import {
+  CheckCircle2Icon,
+  ClapperboardIcon,
+  HistoryIcon,
+  Loader2Icon,
+  PencilIcon,
+  RotateCcwIcon,
+  Trash2Icon,
+} from "lucide-react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { toast } from "sonner";
@@ -27,7 +36,9 @@ import {
 import type { Story } from "@/db/schema";
 import { REVISION_SOURCE_LABELS, type RevisionSource, type StoryStatus } from "@/lib/stories";
 import type { ActionResult } from "@/server/actions/ideas";
+import { createProductionPlan } from "@/server/actions/production";
 import { deleteStory, restoreRevision, setStoryApproval } from "@/server/actions/stories";
+import type { CharacterOption } from "@/server/queries/production";
 import type { IdeaOption } from "@/server/queries/stories";
 
 function useAction() {
@@ -50,7 +61,15 @@ function useAction() {
   return [pending, run] as const;
 }
 
-export function EditBriefButton({ story, ideas }: { story: Story; ideas: IdeaOption[] }) {
+export function EditBriefButton({
+  story,
+  ideas,
+  library,
+}: {
+  story: Story;
+  ideas: IdeaOption[];
+  library: CharacterOption[];
+}) {
   const [open, setOpen] = useState(false);
   return (
     <>
@@ -70,6 +89,7 @@ export function EditBriefButton({ story, ideas }: { story: Story; ideas: IdeaOpt
             <StoryForm
               ideas={ideas}
               story={story}
+              library={library}
               onDone={() => setOpen(false)}
               onCancel={() => setOpen(false)}
             />
@@ -119,11 +139,14 @@ export function ApprovalPanel({
   status,
   hasContent,
   approvedAt,
+  planId,
 }: {
   storyId: string;
   status: StoryStatus;
   hasContent: boolean;
   approvedAt: string | null;
+  /** The production plan made from this story, if any. */
+  planId: string | null;
 }) {
   const [confirmed, setConfirmed] = useState(false);
   const [pending, run] = useAction();
@@ -138,7 +161,20 @@ export function ApprovalPanel({
             sends it back to review.
           </p>
         </div>
-        <Button variant="outline" disabled={pending} onClick={() => run(() => setStoryApproval(storyId, false))}>
+        {planId ? (
+          <Button asChild>
+            <Link href={`/production/${planId}`}>
+              <ClapperboardIcon />
+              Open production plan
+            </Link>
+          </Button>
+        ) : (
+          <Button disabled={pending} onClick={() => run(() => createProductionPlan(storyId))}>
+            {pending ? <Loader2Icon className="animate-spin" /> : <ClapperboardIcon />}
+            {pending ? "Importing scenes…" : "Start production"}
+          </Button>
+        )}
+        <Button variant="ghost" disabled={pending} onClick={() => run(() => setStoryApproval(storyId, false))}>
           Move back to review
         </Button>
       </div>
@@ -168,7 +204,8 @@ export function ApprovalPanel({
         Approve for production
       </Button>
       <p className="text-xs text-muted-foreground">
-        Approval only marks the story ready for the Production Studio. Nothing is published.
+        Next you can start production: the scenes, characters and prompts are imported in one click. Nothing is
+        published.
       </p>
     </div>
   );
@@ -197,9 +234,9 @@ export function RevisionList({ storyId, revisions }: { storyId: string; revision
   }
 
   return (
-    <ol className="grid gap-2">
+    <ol className="grid grid-cols-[minmax(0,1fr)] gap-2">
       {revisions.map((revision, i) => (
-        <li key={revision.id} className="rounded-lg border bg-background/40 p-2.5 text-sm">
+        <li key={revision.id} className="min-w-0 rounded-lg border bg-background/40 p-2.5 text-sm">
           <div className="flex items-start justify-between gap-2">
             <div className="min-w-0">
               <p className="font-medium">
@@ -221,6 +258,7 @@ export function RevisionList({ storyId, revisions }: { storyId: string; revision
               <Button
                 variant="ghost"
                 size="sm"
+                className="shrink-0"
                 disabled={pending}
                 onClick={() => run(() => restoreRevision(storyId, revision.id))}
               >

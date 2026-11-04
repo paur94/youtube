@@ -79,6 +79,7 @@ export async function getIdeaOptions() {
       id: ideas.id,
       title: ideas.title,
       description: ideas.description,
+      learningObjective: ideas.learningObjective,
       ageGroup: ideas.ageGroup,
       format: ideas.format,
       notes: ideas.notes,
@@ -89,6 +90,18 @@ export async function getIdeaOptions() {
 }
 
 export type IdeaOption = Awaited<ReturnType<typeof getIdeaOptions>>[number];
+
+/** Settings of the most recent brief, used as defaults so a new brief only needs what's new. */
+export async function getLastBriefDefaults() {
+  const [row] = await db
+    .select({ ageGroup: stories.ageGroup, tone: stories.tone, visualStyle: stories.visualStyle, language: stories.language })
+    .from(stories)
+    .orderBy(desc(stories.createdAt))
+    .limit(1);
+  return row ?? null;
+}
+
+export type BriefDefaults = Awaited<ReturnType<typeof getLastBriefDefaults>>;
 
 export async function getStoriesInProgressCount() {
   const [row] = await db

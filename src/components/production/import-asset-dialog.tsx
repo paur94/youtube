@@ -190,7 +190,7 @@ export function ImportAssetDialog({
                 maxLength={120}
                 value={model}
                 onChange={(e) => setModel(e.target.value)}
-                placeholder={origin === "computer" ? "e.g. Midjourney, Runway, my own footage" : "e.g. Kling 2.5 Turbo in the Higgsfield app"}
+                placeholder={origin === "computer" ? "e.g. Midjourney, Runway, my own footage" : "e.g. Wan 3.0 in the Higgsfield app"}
               />
             </div>
           )}

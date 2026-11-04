@@ -25,6 +25,7 @@ import { buildGenerationPrompt, findPromptConcerns, POLLABLE_JOB_STATUSES } from
 import { getClaudeConfig } from "@/server/ai/claude";
 import { getHedraConfig } from "@/server/providers/hedra";
 import { getHiggsfieldConfig } from "@/server/providers/higgsfield";
+import { getReplicateConfig } from "@/server/providers/replicate";
 import { generationBlockers, getReferenceCandidates, loadSceneQc } from "@/server/qc/service";
 import { getCharacterOptions, getScene } from "@/server/queries/production";
 
@@ -197,6 +198,7 @@ async function SceneData({ params }: Pick<Props, "params">) {
                 characterReferences={characterReferences}
                 sceneReferenceCount={sceneReferenceIds.length}
                 apiConfigured={higgsfield.configured}
+                replicateConfigured={getReplicateConfig().configured}
                 hedraConfigured={getHedraConfig().configured}
                 prompt={prompt}
                 negativePrompt={scene.negativePrompt}
@@ -231,7 +233,7 @@ async function SceneData({ params }: Pick<Props, "params">) {
               <CardTitle>Generation history</CardTitle>
             </CardHeader>
             <CardContent className="grid gap-3">
-              <JobPoller sceneId={scene.id} active={higgsfield.configured ? activeApiJobs : 0} />
+              <JobPoller sceneId={scene.id} active={higgsfield.configured || getReplicateConfig().configured ? activeApiJobs : 0} />
               <JobList jobs={detail.jobs.map(toJobItem)} />
             </CardContent>
           </Card>

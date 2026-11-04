@@ -33,6 +33,17 @@ const notesSchema = z.string().trim().max(2000, "Revision notes are limited to 2
 
 const DB_ERROR = "Could not reach the database. Is Postgres running (npm run db:up)?";
 
+// The form can outlive its idea (deleted in another tab), and Postgres would reject the link.
+async function missingIdea(ideaId: string | null): Promise<StoryFormState> {
+  if (!ideaId) return null;
+  const [idea] = await db.select({ id: ideas.id }).from(ideas).where(eq(ideas.id, ideaId));
+  if (idea) return null;
+  return {
+    ok: false,
+    errors: { ideaId: ["This idea no longer exists. Reload the page and pick it again, or start from scratch."] },
+  };
+}
+
 function revalidateStory(id?: string) {
   revalidatePath("/");
   revalidatePath("/stories");
@@ -73,6 +84,8 @@ export async function createStory(_prev: StoryFormState, formData: FormData): Pr
 
   let id: string;
   try {
+    const invalid = await missingIdea(parsed.data.ideaId);
+    if (invalid) return invalid;
     [{ id }] = await db.insert(stories).values(parsed.data).returning({ id: stories.id });
   } catch (error) {
     console.error("createStory failed", error);
@@ -96,6 +109,8 @@ export async function updateStoryBrief(
 
   let updated: { id: string }[];
   try {
+    const invalid = await missingIdea(parsed.data.ideaId);
+    if (invalid) return invalid;
     updated = await db
       .update(stories)
       .set(parsed.data)

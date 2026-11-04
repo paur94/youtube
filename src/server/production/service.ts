@@ -30,7 +30,15 @@ import {
   isHedraJobRequest,
   MAX_HEDRA_IMAGE_BYTES,
 } from "@/lib/hedra";
-import { buildRequestBody, generatesAudio, getHiggsfieldModel, outputDuration } from "@/lib/higgsfield";
+import type { RemoteStatus } from "@/lib/generation-jobs";
+import {
+  buildRequestBody,
+  generatesAudio,
+  getHiggsfieldModel,
+  type HiggsfieldModel,
+  outputDuration,
+} from "@/lib/higgsfield";
+import { estimateReplicateCost, REPLICATE_PROVIDER, replicateToRemoteStatus } from "@/lib/replicate";
 import {
   ASPECT_RATIOS,
   type AspectRatio,
@@ -42,18 +50,17 @@ import {
   DIALOGUE_NEGATIVE_PROMPT,
   describeReferenceImages,
   findPromptConcerns,
+  isReadyForAssembly,
   JOB_TIMEOUT_MS,
+  type PlanStatus,
   POLLABLE_JOB_STATUSES,
 } from "@/lib/production";
 import { readSceneContinuity } from "@/lib/story-qc";
 import { downloadMedia, MediaError, resolveMediaPath, saveInputFile } from "@/server/media/storage";
+import { advanceIdeaStatus } from "@/server/pipeline";
 import { getHedraClient, HEDRA_NOT_CONFIGURED_MESSAGE, HedraError } from "@/server/providers/hedra";
-import {
-  getHiggsfieldClient,
-  type HiggsfieldClient,
-  HiggsfieldError,
-  NOT_CONFIGURED_MESSAGE,
-} from "@/server/providers/higgsfield";
+import { getHiggsfieldClient, HiggsfieldError, NOT_CONFIGURED_MESSAGE } from "@/server/providers/higgsfield";
+import { getReplicateClient, REPLICATE_NOT_CONFIGURED_MESSAGE, ReplicateError } from "@/server/providers/replicate";
 
 type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
 type Executor = typeof db | Tx;
@@ -95,17 +102,34 @@ export async function syncSceneStatus(tx: Executor, sceneId: string) {
     .set({ status, error: status === "failed" ? (jobs[0]?.error ?? "Generation failed") : null })
     .where(eq(productionScenes.id, sceneId));
 
-  // Any production activity moves a plan out of planning; any unapproved scene blocks assembly.
-  const [plan] = await tx
-    .select({ status: productionPlans.status })
-    .from(productionPlans)
-    .where(eq(productionPlans.id, scene.planId));
-  if (plan?.status === "ready_for_assembly" && status !== "approved") {
-    await tx.update(productionPlans).set({ status: "in_production" }).where(eq(productionPlans.id, scene.planId));
-  } else if (plan?.status === "planning" && (jobs.length > 0 || sceneAssets.length > 0)) {
-    await tx.update(productionPlans).set({ status: "in_production" }).where(eq(productionPlans.id, scene.planId));
-  }
+  await syncPlanStatus(tx, scene.planId, jobs.length > 0 || sceneAssets.length > 0);
   return status;
+}
+
+/**
+ * A plan is ready for assembly exactly when every scene has an approved final asset (each one was
+ * reviewed on its own, so there is no separate sign-off). Any production activity moves a plan
+ * out of planning.
+ */
+export async function syncPlanStatus(tx: Executor, planId: string, activity = false) {
+  const [plan] = await tx
+    .select({ status: productionPlans.status, storyId: productionPlans.storyId })
+    .from(productionPlans)
+    .where(eq(productionPlans.id, planId));
+  if (!plan) return;
+  const scenes = await tx
+    .select({ status: productionScenes.status })
+    .from(productionScenes)
+    .where(eq(productionScenes.planId, planId));
+
+  const next: PlanStatus = isReadyForAssembly(scenes)
+    ? "ready_for_assembly"
+    : plan.status === "planning" && !activity
+      ? "planning"
+      : "in_production";
+  if (next === plan.status) return;
+  await tx.update(productionPlans).set({ status: next }).where(eq(productionPlans.id, planId));
+  if (next === "ready_for_assembly") await advanceIdeaStatus(plan.storyId, "generated", tx);
 }
 
 async function nextRevision(tx: Executor, owner: { sceneId?: string | null; characterId?: string | null }) {
@@ -227,10 +251,63 @@ export async function pickCharacterReferences(linked: CharacterRef[]) {
   return [...groups.values()];
 }
 
-/** Makes a stored image readable by Higgsfield: uploads the local file, or falls back to its source URL. */
-async function publicImageUrl(client: HiggsfieldClient, asset: typeof assets.$inferSelect) {
+/** Errors whose message is written for the user. */
+function isProviderError(error: unknown): error is Error {
+  return (
+    error instanceof HiggsfieldError ||
+    error instanceof ReplicateError ||
+    error instanceof HedraError ||
+    error instanceof MediaError
+  );
+}
+
+/** The provider that serves a catalog model (Higgsfield, or Replicate for its Wan 3.0 entries). */
+type ApiProvider = {
+  label: string;
+  uploadFile: (bytes: Uint8Array, contentType: string) => Promise<string>;
+  /** USD estimate, or null when none is available. */
+  estimate: (body: Record<string, unknown>) => Promise<number | null>;
+  submit: (body: Record<string, unknown>, idempotencyKey: string) => Promise<{ requestId: string; running: boolean }>;
+};
+
+function getApiProvider(model: HiggsfieldModel): ApiProvider | null {
+  if (model.provider === REPLICATE_PROVIDER) {
+    const replicate = getReplicateClient();
+    return (
+      replicate && {
+        label: "Replicate",
+        uploadFile: (bytes, contentType) => replicate.uploadFile(bytes, contentType),
+        estimate: async (body) => estimateReplicateCost(model, body),
+        submit: async (body) => {
+          const prediction = await replicate.createPrediction(model.path, body);
+          return { requestId: prediction.id, running: prediction.status === "processing" };
+        },
+      }
+    );
+  }
+  const client = getHiggsfieldClient();
+  return (
+    client && {
+      label: "Higgsfield",
+      uploadFile: (bytes, contentType) => client.uploadFile(bytes, contentType),
+      estimate: (body) => client.estimate(model.path, body),
+      submit: async (body, idempotencyKey) => {
+        const response = await client.submit(model.path, body, idempotencyKey);
+        return { requestId: response.request_id, running: response.status === "in_progress" };
+      },
+    }
+  );
+}
+
+function notConfiguredMessage(provider: string | undefined) {
+  if (provider === REPLICATE_PROVIDER) return REPLICATE_NOT_CONFIGURED_MESSAGE;
+  return provider === HEDRA_PROVIDER ? HEDRA_NOT_CONFIGURED_MESSAGE : NOT_CONFIGURED_MESSAGE;
+}
+
+/** Makes a stored image readable by the provider: uploads the local file, or falls back to its source URL. */
+async function publicImageUrl(provider: ApiProvider, asset: typeof assets.$inferSelect) {
   const file = asset.filePath ? resolveMediaPath(asset.filePath) : null;
-  if (file && asset.contentType) return client.uploadFile(new Uint8Array(await readFile(file)), asset.contentType);
+  if (file && asset.contentType) return provider.uploadFile(new Uint8Array(await readFile(file)), asset.contentType);
   return asset.sourceUrl;
 }
 
@@ -256,13 +333,12 @@ function startImageProblem(start: Asset | undefined, scene: Pick<ProductionScene
   return start.status === "approved" ? null : "The start image must be approved";
 }
 
-/** Submits an automated Higgsfield generation for a scene. */
+/** Submits an automated generation for a scene to the model's provider (Higgsfield or Replicate). */
 export async function submitApiGeneration(options: SubmitOptions): Promise<ServiceResult> {
-  const client = getHiggsfieldClient();
-  if (!client) return { ok: false, message: NOT_CONFIGURED_MESSAGE };
-
   const model = getHiggsfieldModel(options.modelId);
-  if (!model) return { ok: false, message: "Choose a supported Higgsfield model" };
+  if (!model) return { ok: false, message: "Choose a supported model" };
+  const client = getApiProvider(model);
+  if (!client) return { ok: false, message: notConfiguredMessage(model.provider) };
 
   const loaded = await loadSceneForGeneration(options.sceneId);
   if (!loaded) return { ok: false, message: "Scene not found" };
@@ -295,7 +371,7 @@ export async function submitApiGeneration(options: SubmitOptions): Promise<Servi
       imageUrl = (await publicImageUrl(client, start)) ?? undefined;
       if (!imageUrl) return { ok: false, message: "The start image file is missing" };
     } catch (error) {
-      return { ok: false, message: error instanceof HiggsfieldError ? error.message : "Could not read the start image" };
+      return { ok: false, message: isProviderError(error) ? error.message : "Could not read the start image" };
     }
   }
 
@@ -325,7 +401,7 @@ ${describeReferenceImages(usable.map((r) => r.names), sceneUrls.length)}`;
     } catch (error) {
       return {
         ok: false,
-        message: error instanceof HiggsfieldError ? error.message : "Could not read a character reference image",
+        message: isProviderError(error) ? error.message : "Could not read a character reference image",
       };
     }
   }
@@ -342,7 +418,7 @@ ${describeReferenceImages(usable.map((r) => r.names), sceneUrls.length)}`;
     numImages: options.numImages,
     referenceUrls,
   });
-  const estimate = (await client.estimate(model.path, body));
+  const estimate = await client.estimate(body);
   const idempotencyKey = randomUUID();
 
   const [job] = await db
@@ -350,6 +426,7 @@ ${describeReferenceImages(usable.map((r) => r.names), sceneUrls.length)}`;
     .values({
       sceneId: scene.id,
       mode: "api",
+      provider: model.provider ?? "higgsfield",
       model: model.id,
       outputKind: model.output,
       status: "queued",
@@ -361,13 +438,11 @@ ${describeReferenceImages(usable.map((r) => r.names), sceneUrls.length)}`;
     })
     .returning({ id: generationJobs.id });
 
-  return sendJob(job.id, scene.id, "Higgsfield", async () => {
-    const response = await client.submit(model.path, body, idempotencyKey);
-    return { requestId: response.request_id, running: response.status === "in_progress" };
-  });
+  return sendJob(job.id, scene.id, client.label, () => client.submit(body, idempotencyKey));
 }
 
 function providerLabel(provider: string) {
+  if (provider === REPLICATE_PROVIDER) return "Replicate";
   return provider === HEDRA_PROVIDER ? "Hedra" : "Higgsfield";
 }
 
@@ -394,10 +469,7 @@ async function sendJob(
     });
     return { ok: true, message: `Submitted to ${label}. Status updates automatically while this page is open.` };
   } catch (error) {
-    const message =
-      error instanceof HiggsfieldError || error instanceof HedraError || error instanceof MediaError
-        ? error.message
-        : `Submitting to ${label} failed`;
+    const message = isProviderError(error) ? error.message : `Submitting to ${label} failed`;
     await db.transaction(async (tx) => {
       await tx
         .update(generationJobs)
@@ -535,8 +607,8 @@ export async function retryApiJob(jobId: string): Promise<ServiceResult> {
 
   const model = getHiggsfieldModel(job.model);
   if (!model) return { ok: false, message: "This model is no longer supported. Start a new generation." };
-  const client = getHiggsfieldClient();
-  if (!client) return { ok: false, message: NOT_CONFIGURED_MESSAGE };
+  const client = getApiProvider(model);
+  if (!client) return { ok: false, message: notConfiguredMessage(model.provider) };
 
   const idempotencyKey = randomUUID();
   const [retry] = await db
@@ -544,6 +616,7 @@ export async function retryApiJob(jobId: string): Promise<ServiceResult> {
     .values({
       sceneId: job.sceneId,
       mode: "api",
+      provider: job.provider,
       model: job.model,
       outputKind: job.outputKind,
       status: "queued",
@@ -557,10 +630,26 @@ export async function retryApiJob(jobId: string): Promise<ServiceResult> {
     })
     .returning({ id: generationJobs.id });
   const body = job.request;
-  return sendJob(retry.id, job.sceneId, "Higgsfield", async () => {
-    const response = await client.submit(model.path, body, idempotencyKey);
-    return { requestId: response.request_id, running: response.status === "in_progress" };
-  });
+  return sendJob(retry.id, job.sceneId, client.label, () => client.submit(body, idempotencyKey));
+}
+
+/** Status polling (and best-effort cancel) for a job's provider, or null when it isn't configured. */
+function getStatusReader(provider: string) {
+  if (provider === HEDRA_PROVIDER) {
+    const hedra = getHedraClient();
+    return hedra && { get: async (id: string) => hedraToRemoteStatus(await hedra.getJob(id)), cancel: null };
+  }
+  if (provider === REPLICATE_PROVIDER) {
+    const replicate = getReplicateClient();
+    return (
+      replicate && {
+        get: async (id: string) => replicateToRemoteStatus(await replicate.getPrediction(id)),
+        cancel: (id: string) => replicate.cancel(id),
+      }
+    );
+  }
+  const client = getHiggsfieldClient();
+  return client && { get: (id: string): Promise<RemoteStatus> => client.getStatus(id), cancel: (id: string) => client.cancel(id) };
 }
 
 export type RefreshOutcome = { changed: boolean; message?: string };
@@ -589,22 +678,16 @@ export async function refreshApiJob(jobId: string): Promise<RefreshOutcome> {
     return { changed: true };
   }
 
-  const client = isHedra ? null : getHiggsfieldClient();
-  const hedra = isHedra ? getHedraClient() : null;
-  if (!client && !hedra) return { changed: false, message: isHedra ? HEDRA_NOT_CONFIGURED_MESSAGE : NOT_CONFIGURED_MESSAGE };
+  const reader = getStatusReader(job.provider);
+  if (!reader) return { changed: false, message: notConfiguredMessage(job.provider) };
 
   let remote;
   try {
-    remote = hedra
-      ? hedraToRemoteStatus(await hedra.getJob(job.externalRequestId))
-      : await client!.getStatus(job.externalRequestId);
+    remote = await reader.get(job.externalRequestId);
   } catch (error) {
     // Transient problems leave the job active; the next poll tries again.
     await db.update(generationJobs).set({ lastCheckedAt: new Date() }).where(eq(generationJobs.id, job.id));
-    return {
-      changed: false,
-      message: error instanceof HiggsfieldError || error instanceof HedraError ? error.message : "Status check failed",
-    };
+    return { changed: false, message: isProviderError(error) ? error.message : "Status check failed" };
   }
 
   const timeoutMs = recheck ? Infinity : isHedra ? HEDRA_JOB_TIMEOUT_MS : JOB_TIMEOUT_MS;
@@ -618,9 +701,9 @@ export async function refreshApiJob(jobId: string): Promise<RefreshOutcome> {
     if (changed) await syncSceneStatus(db, job.sceneId);
     return { changed };
   }
-  if (client && update.status === "timed_out" && remote.status === "queued") {
+  if (reader.cancel && update.status === "timed_out" && remote.status === "queued") {
     // Best effort: a request canceled while queued is refunded.
-    await client.cancel(job.externalRequestId).catch(() => undefined);
+    await reader.cancel(job.externalRequestId).catch(() => undefined);
   }
 
   const model = job.model && !isHedra ? getHiggsfieldModel(job.model) : null;
@@ -660,7 +743,7 @@ export async function refreshApiJob(jobId: string): Promise<RefreshOutcome> {
         sceneId: job.sceneId,
         jobId: job.id,
         kind: file?.kind ?? output.kind,
-        source: isHedra ? "hedra_api" : "higgsfield_api",
+        source: isHedra ? "hedra_api" : job.provider === REPLICATE_PROVIDER ? "replicate_api" : "higgsfield_api",
         provider: label,
         model: job.model,
         filePath: file?.filePath ?? null,
@@ -684,7 +767,7 @@ export async function refreshApiJob(jobId: string): Promise<RefreshOutcome> {
 
 /** Polls every active API job of a plan (or of one scene). */
 export async function refreshActiveJobs(scope: { planId?: string; sceneId?: string }) {
-  if (!getHiggsfieldClient() && !getHedraClient()) return { changed: false, active: 0, message: NOT_CONFIGURED_MESSAGE };
+  if (!getHiggsfieldClient() && !getHedraClient() && !getReplicateClient()) return { changed: false, active: 0, message: NOT_CONFIGURED_MESSAGE };
   const where = scope.sceneId
     ? eq(generationJobs.sceneId, scope.sceneId)
     : eq(productionScenes.planId, scope.planId!);

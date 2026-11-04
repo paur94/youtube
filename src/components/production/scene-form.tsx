@@ -142,7 +142,7 @@ export function SceneForm({
       <Field
         id={`${id}-negative`}
         label="Negative prompt"
-        hint="Sent only to models that support it (Kling)"
+        hint="Sent only to models that support it (Wan 3.0 via Replicate)"
         error={errors?.negativePrompt}
       >
         <Textarea id={`${id}-negative`} name="negativePrompt" rows={2} maxLength={2000} defaultValue={scene.negativePrompt} />

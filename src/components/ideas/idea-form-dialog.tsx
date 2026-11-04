@@ -1,6 +1,6 @@
 "use client";
 
-import { startTransition, useActionState, useEffect, useEffectEvent, useId } from "react";
+import { startTransition, useActionState, useEffect, useEffectEvent, useId, useState } from "react";
 import { toast } from "sonner";
 
 import { Field, SelectField } from "@/components/form-fields";
@@ -23,12 +23,10 @@ import {
   CATEGORIES,
   CATEGORY_LABELS,
   FORMAT_LABELS,
-  IDEA_STATUSES,
   ORIGINALITY_LABELS,
   ORIGINALITY_STATUSES,
   PRIORITIES,
   PRIORITY_LABELS,
-  STATUS_LABELS,
   VIDEO_FORMATS,
   type IdeaFormState,
 } from "@/lib/ideas";
@@ -47,7 +45,7 @@ export function IdeaFormDialog({ open, onOpenChange, idea }: Props) {
         <DialogHeader>
           <DialogTitle>{idea ? "Edit idea" : "New idea"}</DialogTitle>
           <DialogDescription>
-            Capture a video concept. You can refine it into a story in the Story Workshop later.
+            Capture a video concept in a few words. Everything here is carried into the story brief when you develop it.
           </DialogDescription>
         </DialogHeader>
         {/* Mounted only while open, so form state resets each time. */}
@@ -62,6 +60,13 @@ function IdeaForm({ idea, onDone }: { idea?: Idea; onDone: () => void }) {
   const [state, formAction, pending] = useActionState<IdeaFormState, FormData>(action, null);
   const id = useId();
   const errors = state && !state.ok ? state.errors : undefined;
+  const [moreOpen, setMoreOpen] = useState(false);
+  const [seenErrors, setSeenErrors] = useState(errors);
+  // Open the collapsed section once when one of its fields fails validation.
+  if (errors !== seenErrors) {
+    setSeenErrors(errors);
+    if (errors?.sourceUrl || errors?.tags || errors?.notes) setMoreOpen(true);
+  }
 
   const onResult = useEffectEvent((result: NonNullable<IdeaFormState>) => {
     if (result.ok) {
@@ -99,25 +104,38 @@ function IdeaForm({ idea, onDone }: { idea?: Idea; onDone: () => void }) {
         />
       </Field>
 
-      <Field id={`${id}-description`} label="Description" error={errors?.description}>
+      <Field
+        id={`${id}-description`}
+        label="Concept"
+        hint="Becomes the story topic"
+        error={errors?.description}
+      >
         <Textarea
           id={`${id}-description`}
           name="description"
           rows={3}
           maxLength={2000}
           defaultValue={idea?.description}
-          placeholder="What happens in the video? What will kids learn?"
+          placeholder="What happens in the video?"
+        />
+      </Field>
+
+      <Field
+        id={`${id}-objective`}
+        label="Learning objective"
+        hint="Optional · can be added in the story brief"
+        error={errors?.learningObjective}
+      >
+        <Input
+          id={`${id}-objective`}
+          name="learningObjective"
+          maxLength={500}
+          defaultValue={idea?.learningObjective}
+          placeholder="e.g. Count from one to five; taking turns is fair"
         />
       </Field>
 
       <div className="grid gap-4 sm:grid-cols-2">
-        <SelectField
-          id={`${id}-category`}
-          name="category"
-          label="Category"
-          defaultValue={idea?.category ?? "learning"}
-          options={CATEGORIES.map((v) => [v, CATEGORY_LABELS[v]])}
-        />
         <SelectField
           id={`${id}-age`}
           name="ageGroup"
@@ -132,81 +150,99 @@ function IdeaForm({ idea, onDone }: { idea?: Idea; onDone: () => void }) {
           defaultValue={idea?.format ?? "standard"}
           options={VIDEO_FORMATS.map((v) => [v, FORMAT_LABELS[v]])}
         />
-        <SelectField
-          id={`${id}-priority`}
-          name="priority"
-          label="Priority"
-          defaultValue={idea?.priority ?? "medium"}
-          options={PRIORITIES.map((v) => [v, PRIORITY_LABELS[v]])}
-        />
-        <SelectField
-          id={`${id}-status`}
-          name="status"
-          label="Workflow status"
-          defaultValue={idea?.status ?? "draft"}
-          options={IDEA_STATUSES.map((v) => [v, STATUS_LABELS[v]])}
-        />
-        <SelectField
-          id={`${id}-originality`}
-          name="originalityStatus"
-          label="Originality review"
-          defaultValue={idea?.originalityStatus ?? "not_reviewed"}
-          options={ORIGINALITY_STATUSES.map((v) => [v, ORIGINALITY_LABELS[v]])}
-        />
       </div>
 
-      <Field
-        id={`${id}-source`}
-        label="Source URL"
-        hint="Optional · where the idea came from"
-        error={errors?.sourceUrl}
+      {/* Collapsed fields still submit, so their values are kept when editing. */}
+      <details
+        open={moreOpen}
+        onToggle={(e) => setMoreOpen(e.currentTarget.open)}
+        className="group rounded-lg border px-3 py-2"
       >
-        <Input
-          id={`${id}-source`}
-          name="sourceUrl"
-          type="url"
-          maxLength={2000}
-          defaultValue={idea?.sourceUrl ?? ""}
-          placeholder="https://…"
-          aria-invalid={!!errors?.sourceUrl}
-        />
-      </Field>
+        <summary className="cursor-pointer text-sm font-medium select-none">
+          More details
+          <span className="ml-1.5 font-normal text-muted-foreground">
+            · Category, priority, originality, source, tags, notes, YouTube compliance
+          </span>
+        </summary>
+        <div className="grid gap-4 pt-3 pb-1">
+          <div className="grid gap-4 sm:grid-cols-3">
+            <SelectField
+              id={`${id}-category`}
+              name="category"
+              label="Category"
+              defaultValue={idea?.category ?? "learning"}
+              options={CATEGORIES.map((v) => [v, CATEGORY_LABELS[v]])}
+            />
+            <SelectField
+              id={`${id}-priority`}
+              name="priority"
+              label="Priority"
+              defaultValue={idea?.priority ?? "medium"}
+              options={PRIORITIES.map((v) => [v, PRIORITY_LABELS[v]])}
+            />
+            <SelectField
+              id={`${id}-originality`}
+              name="originalityStatus"
+              label="Originality review"
+              defaultValue={idea?.originalityStatus ?? "not_reviewed"}
+              options={ORIGINALITY_STATUSES.map((v) => [v, ORIGINALITY_LABELS[v]])}
+            />
+          </div>
 
-      <Field id={`${id}-tags`} label="Tags" hint="Comma-separated" error={errors?.tags}>
-        <Input
-          id={`${id}-tags`}
-          name="tags"
-          defaultValue={idea?.tags.join(", ")}
-          placeholder="animals, counting, songs"
-        />
-      </Field>
+          <Field
+            id={`${id}-source`}
+            label="Source URL"
+            hint="Optional · where the idea came from"
+            error={errors?.sourceUrl}
+          >
+            <Input
+              id={`${id}-source`}
+              name="sourceUrl"
+              type="url"
+              maxLength={2000}
+              defaultValue={idea?.sourceUrl ?? ""}
+              placeholder="https://…"
+              aria-invalid={!!errors?.sourceUrl}
+            />
+          </Field>
 
-      <Field id={`${id}-notes`} label="Notes" error={errors?.notes}>
-        <Textarea
-          id={`${id}-notes`}
-          name="notes"
-          rows={2}
-          maxLength={5000}
-          defaultValue={idea?.notes}
-          placeholder="References, music ideas, character notes…"
-        />
-      </Field>
+          <Field id={`${id}-tags`} label="Tags" hint="Comma-separated" error={errors?.tags}>
+            <Input
+              id={`${id}-tags`}
+              name="tags"
+              defaultValue={idea?.tags.join(", ")}
+              placeholder="animals, counting, songs"
+            />
+          </Field>
 
-      <fieldset className="grid gap-2 rounded-lg border p-3">
-        <legend className="px-1 text-xs font-medium text-muted-foreground">
-          YouTube compliance
-        </legend>
-        <Checkbox
-          name="madeForKids"
-          defaultChecked={idea?.madeForKids ?? true}
-          label="Made for kids (COPPA)"
-        />
-        <Checkbox
-          name="containsSyntheticMedia"
-          defaultChecked={idea?.containsSyntheticMedia ?? true}
-          label="Contains realistic AI-generated content (disclosure)"
-        />
-      </fieldset>
+          <Field id={`${id}-notes`} label="Notes" hint="Carried into the story brief" error={errors?.notes}>
+            <Textarea
+              id={`${id}-notes`}
+              name="notes"
+              rows={2}
+              maxLength={5000}
+              defaultValue={idea?.notes}
+              placeholder="References, music ideas, things to avoid…"
+            />
+          </Field>
+
+          <fieldset className="grid gap-2 rounded-lg border p-3">
+            <legend className="px-1 text-xs font-medium text-muted-foreground">
+              YouTube compliance
+            </legend>
+            <Checkbox
+              name="madeForKids"
+              defaultChecked={idea?.madeForKids ?? true}
+              label="Made for kids (COPPA)"
+            />
+            <Checkbox
+              name="containsSyntheticMedia"
+              defaultChecked={idea?.containsSyntheticMedia ?? true}
+              label="Contains realistic AI-generated content (disclosure)"
+            />
+          </fieldset>
+        </div>
+      </details>
 
       <DialogFooter>
         <DialogClose asChild>

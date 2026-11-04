@@ -1,4 +1,5 @@
 import type { AspectRatio, AssetKind } from "./production";
+import type { REPLICATE_PROVIDER } from "./replicate";
 
 // Only endpoints and parameters published in Higgsfield's API docs and OpenAPI spec
 // (https://docs.higgsfield.ai/docs/openapi.json and https://docs.higgsfield.ai/docs/models.md,
@@ -11,8 +12,6 @@ export type HiggsfieldModel = {
   output: AssetKind;
   /** "image" models animate a start frame passed as image_url. */
   input: "text" | "image";
-  /** Fixed clip lengths the model accepts. */
-  durations?: readonly number[];
   /** Any whole number of seconds in this range. */
   durationRange?: readonly [min: number, max: number];
   aspectRatios?: readonly string[];
@@ -24,31 +23,25 @@ export type HiggsfieldModel = {
   fixedBody?: Record<string, unknown>;
   /** Always generates its own soundtrack; the API has no switch for it. */
   nativeAudio?: boolean;
+  /** Served by Replicate instead of Higgsfield; path is then under https://api.replicate.com/v1. */
+  provider?: typeof REPLICATE_PROVIDER;
+  /** Replicate price per second of output at the fixed resolution, for the cost estimate. */
+  usdPerSecond?: number;
 };
 
 const SOUL_ASPECT_RATIOS = ["1:1", "4:3", "3:4", "3:2", "2:3", "5:4", "4:5", "16:9", "9:16", "21:9"];
 const GROK_ASPECT_RATIOS = ["1:1", "1:2", "2:1", "3:2", "2:3", "4:3", "3:4", "16:9", "9:16"];
-const SEEDANCE_ASPECT_RATIOS = ["16:9", "4:3", "1:1", "3:4", "9:16", "21:9"];
-// Narration and music are produced separately, so generated audio is switched off.
-const SEEDANCE_BODY = { resolution: "1080p", generate_audio: false };
-// 720p with native sound, so the prompt carries the dialogue.
-const SEEDANCE_720P_AUDIO_BODY = { resolution: "720p", generate_audio: true };
-
-// 720p with native sound: about $0.51 per 10s, far cheaper than Seedance 2.5 at 1080p (~$11 per 10s).
-const PIXVERSE_BODY = { resolution: "720p", generate_audio: true };
 
 // Wan 3.0 defaults to 1080p; 720p keeps test runs cheap. Native sound, so the prompt carries the dialogue.
 const WAN_ASPECT_RATIOS = ["16:9", "4:3", "1:1", "3:4", "9:16"];
 const WAN_BODY = { resolution: "720p", generate_audio: true };
 
-// Kling 3.0 "std" is the 720p tier (pro is 1080p). Native sound uses `sound`, not generate_audio.
-const KLING_3_ASPECT_RATIOS = ["16:9", "9:16", "1:1"];
-const KLING_3_BODY = { sound: "on" };
-
-// Kling 4.0 always generates stereo sound (no audio field in its schema). Checked against the API's
-// /estimate validation, November 2026: about $1.34 per 10s at 720p. Image-to-video takes no aspect_ratio.
-const KLING_4_ASPECT_RATIOS = ["21:9", "16:9", "9:16", "1:1"];
-const KLING_4_BODY = { resolution: "720p" };
+// Wan 3.0 on Replicate (https://replicate.com/alibaba/wan-3): one model for text and image to video,
+// $0.10/s at 720p. It always generates sound (checked on an example output: AAC track, no switch in the
+// schema), so the prompt carries the dialogue. No reference images, and aspect_ratio is ignored with a
+// start image. Prompt expansion is off so the scene prompt is used as written.
+const REPLICATE_WAN_PATH = "/models/alibaba/wan-3/predictions";
+const REPLICATE_WAN_BODY = { resolution: "720p", enable_prompt_expansion: false };
 
 export const HIGGSFIELD_MODELS: readonly HiggsfieldModel[] = [
   {
@@ -80,16 +73,6 @@ export const HIGGSFIELD_MODELS: readonly HiggsfieldModel[] = [
     maxReferenceImages: 10,
     // 2k keyframes hold up as start frames for 1080p clips.
     fixedBody: { quality: "medium", resolution: "2k" },
-  },
-  {
-    id: "pixverse-v6-i2v",
-    label: "PixVerse V6 (image to video, 720p, sound)",
-    path: "/pixverse/v6/image-to-video",
-    output: "video",
-    input: "image",
-    durationRange: [1, 15],
-    supportsNegativePrompt: true,
-    fixedBody: PIXVERSE_BODY,
   },
   {
     id: "wan-3.0-i2v",
@@ -126,135 +109,31 @@ export const HIGGSFIELD_MODELS: readonly HiggsfieldModel[] = [
     fixedBody: WAN_BODY,
   },
   {
-    id: "seedance-2.5-i2v",
-    label: "Seedance 2.5 (image to video, 1080p, expensive: ~$11 per 10s)",
-    path: "/bytedance/seedance-2.5/image-to-video",
+    id: "replicate-wan-3-i2v",
+    label: "Wan 3.0 via Replicate (image to video, 720p, sound, ~$1 per 10s)",
+    path: REPLICATE_WAN_PATH,
     output: "video",
     input: "image",
-    durationRange: [4, 30],
-    supportsNegativePrompt: false,
-    fixedBody: SEEDANCE_BODY,
-  },
-  {
-    id: "seedance-2.5-720p-i2v",
-    label: "Seedance 2.5 (image to video, 720p, sound)",
-    path: "/bytedance/seedance-2.5/image-to-video",
-    output: "video",
-    input: "image",
-    durationRange: [4, 30],
-    supportsNegativePrompt: false,
-    fixedBody: SEEDANCE_720P_AUDIO_BODY,
-  },
-  {
-    id: "seedance-2.5-720p-t2v",
-    label: "Seedance 2.5 (text to video, 720p, sound)",
-    path: "/bytedance/seedance-2.5/text-to-video",
-    output: "video",
-    input: "text",
-    durationRange: [4, 30],
-    aspectRatios: SEEDANCE_ASPECT_RATIOS,
-    supportsNegativePrompt: false,
-    fixedBody: SEEDANCE_720P_AUDIO_BODY,
-  },
-  {
-    id: "seedance-2.5-t2v",
-    label: "Seedance 2.5 (text to video)",
-    path: "/bytedance/seedance-2.5/text-to-video",
-    output: "video",
-    input: "text",
-    durationRange: [4, 30],
-    aspectRatios: SEEDANCE_ASPECT_RATIOS,
-    supportsNegativePrompt: false,
-    fixedBody: SEEDANCE_BODY,
-  },
-  {
-    id: "kling-4.0-i2v",
-    label: "Kling 4.0 (image to video, 720p, sound, ~$1.34 per 10s)",
-    path: "/kling-video/v4.0/image-to-video",
-    output: "video",
-    input: "image",
-    durationRange: [3, 30],
-    supportsNegativePrompt: false,
-    fixedBody: KLING_4_BODY,
+    durationRange: [2, 30],
+    supportsNegativePrompt: true,
+    fixedBody: REPLICATE_WAN_BODY,
+    provider: "replicate",
+    usdPerSecond: 0.1,
     nativeAudio: true,
   },
   {
-    id: "kling-4.0-t2v",
-    label: "Kling 4.0 (text to video, 720p, sound, ~$1.34 per 10s)",
-    path: "/kling-video/v4.0/text-to-video",
+    id: "replicate-wan-3-t2v",
+    label: "Wan 3.0 via Replicate (text to video, 720p, sound, ~$1 per 10s)",
+    path: REPLICATE_WAN_PATH,
     output: "video",
     input: "text",
-    durationRange: [3, 30],
-    aspectRatios: KLING_4_ASPECT_RATIOS,
-    supportsNegativePrompt: false,
-    fixedBody: KLING_4_BODY,
+    durationRange: [2, 30],
+    aspectRatios: WAN_ASPECT_RATIOS,
+    supportsNegativePrompt: true,
+    fixedBody: REPLICATE_WAN_BODY,
+    provider: "replicate",
+    usdPerSecond: 0.1,
     nativeAudio: true,
-  },
-  {
-    id: "kling-3.0-std-i2v",
-    label: "Kling 3.0 Standard (image to video, 720p, sound)",
-    path: "/kling-video/v3.0/std/image-to-video",
-    output: "video",
-    input: "image",
-    durationRange: [3, 15],
-    supportsNegativePrompt: false,
-    fixedBody: KLING_3_BODY,
-  },
-  {
-    id: "kling-3.0-std-t2v",
-    label: "Kling 3.0 Standard (text to video, 720p, sound)",
-    path: "/kling-video/v3.0/std/text-to-video",
-    output: "video",
-    input: "text",
-    durationRange: [3, 15],
-    aspectRatios: KLING_3_ASPECT_RATIOS,
-    supportsNegativePrompt: false,
-    fixedBody: KLING_3_BODY,
-  },
-  {
-    id: "kling-2.5-turbo-pro-i2v",
-    label: "Kling 2.5 Turbo Pro (image to video)",
-    path: "/kling-video/v2.5-turbo/pro/image-to-video",
-    output: "video",
-    input: "image",
-    durations: [5, 10],
-    supportsNegativePrompt: true,
-  },
-  {
-    id: "kling-2.5-turbo-standard-i2v",
-    label: "Kling 2.5 Turbo Standard (image to video)",
-    path: "/kling-video/v2.5-turbo/standard/image-to-video",
-    output: "video",
-    input: "image",
-    durations: [5, 10],
-    supportsNegativePrompt: true,
-  },
-  {
-    id: "kling-2.5-turbo-pro-t2v",
-    label: "Kling 2.5 Turbo Pro (text to video)",
-    path: "/kling-video/v2.5-turbo/pro/text-to-video",
-    output: "video",
-    input: "text",
-    durations: [5, 10],
-    supportsNegativePrompt: true,
-  },
-  {
-    id: "hailuo-2.3-standard-i2v",
-    label: "Hailuo 2.3 Standard (image to video)",
-    path: "/minimax/hailuo-2.3/standard/image-to-video",
-    output: "video",
-    input: "image",
-    durations: [6, 10],
-    supportsNegativePrompt: false,
-  },
-  {
-    id: "hailuo-2.3-standard-t2v",
-    label: "Hailuo 2.3 Standard (text to video)",
-    path: "/minimax/hailuo-2.3/standard/text-to-video",
-    output: "video",
-    input: "text",
-    durations: [6, 10],
-    supportsNegativePrompt: false,
   },
 ];
 
@@ -269,31 +148,19 @@ export function getHiggsfieldModel(id: string) {
 
 /** True for video models that produce their own soundtrack, so the prompt should carry the dialogue. */
 export function generatesAudio(model: HiggsfieldModel) {
-  return (
-    model.output === "video" &&
-    (model.nativeAudio === true || model.fixedBody?.generate_audio === true || model.fixedBody?.sound === "on")
-  );
-}
-
-/** Smallest supported duration that covers the scene, or the longest one available. */
-export function pickDuration(durations: readonly number[], seconds: number) {
-  const sorted = [...durations].sort((a, b) => a - b);
-  return sorted.find((d) => d >= seconds) ?? sorted[sorted.length - 1];
+  return model.output === "video" && (model.nativeAudio === true || model.fixedBody?.generate_audio === true);
 }
 
 /** Clip length a model will be asked for, given the scene length; null for image models. */
 export function modelDuration(model: HiggsfieldModel, seconds: number) {
-  if (model.durationRange) {
-    const [min, max] = model.durationRange;
-    return Math.min(max, Math.max(min, Math.ceil(seconds)));
-  }
-  return model.durations ? pickDuration(model.durations, seconds) : null;
+  if (!model.durationRange) return null;
+  const [min, max] = model.durationRange;
+  return Math.min(max, Math.max(min, Math.ceil(seconds)));
 }
 
 /** Human-readable clip lengths a model supports. */
 export function describeDurations(model: HiggsfieldModel) {
-  if (model.durationRange) return `${model.durationRange[0]}–${model.durationRange[1]}s`;
-  return model.durations ? `${model.durations.join(" or ")}s` : null;
+  return model.durationRange ? `${model.durationRange[0]}–${model.durationRange[1]}s` : null;
 }
 
 export function pickAspectRatio(supported: readonly string[], wanted: AspectRatio) {
@@ -316,7 +183,7 @@ export function buildRequestBody(model: HiggsfieldModel, params: GenerationParam
   const body: Record<string, unknown> = { prompt: params.prompt, ...model.fixedBody };
   if (model.input === "image") {
     if (!params.imageUrl) throw new Error(`${model.label} needs a start image`);
-    body.image_url = params.imageUrl;
+    body[model.provider === "replicate" ? "image" : "image_url"] = params.imageUrl;
   }
   if (model.aspectRatios) body.aspect_ratio = pickAspectRatio(model.aspectRatios, params.aspectRatio);
   if (model.maxReferenceImages && params.referenceUrls?.length) {

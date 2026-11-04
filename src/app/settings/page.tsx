@@ -19,6 +19,7 @@ import { getFfmpegVersion } from "@/server/media/ffmpeg";
 import { getMediaRoot } from "@/server/media/storage";
 import { getHedraConfig } from "@/server/providers/hedra";
 import { getHiggsfieldConfig } from "@/server/providers/higgsfield";
+import { getReplicateConfig } from "@/server/providers/replicate";
 import { getTikTokConfig } from "@/server/providers/tiktok";
 import { getYouTubeConfig } from "@/server/providers/youtube";
 import { getSampleIdeaCount } from "@/server/queries/ideas";
@@ -150,6 +151,10 @@ async function ProductionStatus() {
       <Row
         label="Higgsfield API"
         value={higgsfield.configured ? "Configured" : "Not configured (manual workflow)"}
+      />
+      <Row
+        label="Replicate API (Wan 3.0)"
+        value={getReplicateConfig().configured ? "Configured" : "Not configured (set REPLICATE_API_TOKEN)"}
       />
       <Row
         label="Hedra API (Character 3)"

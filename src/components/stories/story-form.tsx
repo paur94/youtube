@@ -1,5 +1,6 @@
 "use client";
 
+import { PlusIcon } from "lucide-react";
 import Link from "next/link";
 import { startTransition, useActionState, useEffect, useEffectEvent, useId, useState } from "react";
 import { toast } from "sonner";
@@ -27,7 +28,8 @@ import {
   type StoryFormState,
 } from "@/lib/stories";
 import { createStory, updateStoryBrief } from "@/server/actions/stories";
-import type { IdeaOption } from "@/server/queries/stories";
+import type { CharacterOption } from "@/server/queries/production";
+import type { BriefDefaults, IdeaOption } from "@/server/queries/stories";
 
 const NO_IDEA = "none";
 
@@ -52,7 +54,8 @@ function briefFromIdea(idea: IdeaOption | undefined): Partial<Brief> {
   return {
     title: idea.title,
     ageGroup: idea.ageGroup,
-    topic: idea.description.slice(0, 300),
+    topic: idea.description,
+    learningObjective: idea.learningObjective || undefined,
     targetDurationSeconds: FORMAT_DURATION[idea.format],
     notes: idea.notes.slice(0, 2000),
   };
@@ -62,10 +65,16 @@ export function StoryForm({
   ideas,
   story,
   initialIdeaId,
+  lastBrief,
+  library = [],
   onDone,
   onCancel,
 }: {
   ideas: IdeaOption[];
+  /** Tone, style, language and age of the previous brief, used when creating. */
+  lastBrief?: BriefDefaults;
+  /** Characters from the library that can be added to the brief with one click. */
+  library?: CharacterOption[];
   /** Present when editing an existing brief. */
   story?: Story;
   initialIdeaId?: string;
@@ -79,8 +88,9 @@ export function StoryForm({
   const errors = state && !state.ok ? state.errors : undefined;
 
   const selectedIdea = ideas.find((i) => i.id === ideaId);
-  // When creating, picking an idea pre-fills the brief; the fields remount with new defaults.
-  const defaults: Partial<Brief> = story ?? briefFromIdea(selectedIdea);
+  // When creating, the previous brief's settings are the starting point and picking an idea
+  // pre-fills the rest; the fields remount with new defaults.
+  const defaults: Partial<Brief> = story ?? { ...lastBrief, ...briefFromIdea(selectedIdea) };
 
   const onResult = useEffectEvent((result: NonNullable<StoryFormState>) => {
     if (result.ok) {
@@ -126,6 +136,11 @@ export function StoryForm({
             )}
           </SelectContent>
         </Select>
+        {!story && selectedIdea && (
+          <p className="text-xs text-muted-foreground">
+            Pre-filled from the idea. Changes here apply to the story only.
+          </p>
+        )}
         {errors?.ideaId?.[0] && <p className="text-xs text-destructive">{errors.ideaId[0]}</p>}
       </div>
 
@@ -167,10 +182,10 @@ export function StoryForm({
           <Textarea
             id={`${id}-topic`}
             name="topic"
-            rows={2}
+            rows={3}
             required
             minLength={3}
-            maxLength={300}
+            maxLength={2000}
             defaultValue={defaults.topic}
             placeholder="What is the story about?"
             aria-invalid={!!errors?.topic}
@@ -190,21 +205,12 @@ export function StoryForm({
           />
         </Field>
 
-        <Field
+        <CharactersField
           id={`${id}-characters`}
-          label="Main characters"
-          hint="One per line · leave empty to let Claude invent them"
+          defaultValue={defaults.characters ?? ""}
+          library={library}
           error={errors?.characters}
-        >
-          <Textarea
-            id={`${id}-characters`}
-            name="characters"
-            rows={3}
-            maxLength={2000}
-            defaultValue={defaults.characters}
-            placeholder={"Pip – a small yellow duckling who loves puddles\nGrandma Hen – patient and wise"}
-          />
-        </Field>
+        />
 
         <div className="grid gap-4 sm:grid-cols-2">
           <Field id={`${id}-tone`} label="Tone" error={errors?.tone}>
@@ -286,5 +292,69 @@ function Suggestions({ id, values }: { id: string; values: string[] }) {
         <option key={v} value={v} />
       ))}
     </datalist>
+  );
+}
+
+function characterLine(c: CharacterOption) {
+  return `${c.name} – ${c.visualDescription}`;
+}
+
+function CharactersField({
+  id,
+  defaultValue,
+  library,
+  error,
+}: {
+  id: string;
+  defaultValue: string;
+  library: CharacterOption[];
+  error?: string[];
+}) {
+  const [value, setValue] = useState(defaultValue);
+  const lines = value.split("\n").map((l) => l.trim().toLowerCase());
+  // A character is listed when a line starts with its name, however the rest of the line reads.
+  const listed = (c: CharacterOption) => lines.some((l) => l.startsWith(c.name.trim().toLowerCase()));
+
+  function add(c: CharacterOption) {
+    setValue((v) => (v.trim() ? `${v.trimEnd()}\n${characterLine(c)}` : characterLine(c)).slice(0, 2000));
+  }
+
+  return (
+    <Field
+      id={id}
+      label="Main characters"
+      hint="One per line · leave empty to let Claude invent them"
+      error={error}
+    >
+      <Textarea
+        id={id}
+        name="characters"
+        rows={3}
+        maxLength={2000}
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+        placeholder={"Pip – a small yellow duckling who loves puddles\nGrandma Hen – patient and wise"}
+      />
+      {library.length > 0 && (
+        <div className="flex flex-wrap items-center gap-1.5">
+          <span className="text-xs text-muted-foreground">From your library:</span>
+          {library.map((c) => (
+            <Button
+              key={c.id}
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-6 px-2 text-xs"
+              disabled={listed(c)}
+              title={c.visualDescription}
+              onClick={() => add(c)}
+            >
+              <PlusIcon className="size-3" />
+              {c.name}
+            </Button>
+          ))}
+        </div>
+      )}
+    </Field>
   );
 }

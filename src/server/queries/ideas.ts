@@ -1,9 +1,9 @@
 import "server-only";
 
-import { and, count, desc, eq, ilike, or, sql, type SQL } from "drizzle-orm";
+import { and, count, desc, eq, getTableColumns, ilike, or, sql, type SQL } from "drizzle-orm";
 
 import { db } from "@/db";
-import { ideas } from "@/db/schema";
+import { ideas, stories } from "@/db/schema";
 import { IDEA_STATUSES, type IdeaFilters, type IdeaStatus } from "@/lib/ideas";
 
 function escapeLike(value: string) {
@@ -31,7 +31,12 @@ export async function listIdeas(filters: IdeaFilters = {}) {
   }
 
   return db
-    .select()
+    .select({
+      ...getTableColumns(ideas),
+      // The story most recently developed from the idea, so the list links to it instead of starting another.
+      // Qualified by hand: without a join drizzle leaves column names bare, and "id" would resolve to stories.
+      storyId: sql<string | null>`(select s.id from ${stories} s where s.idea_id = ${ideas}.id order by s.updated_at desc limit 1)`,
+    })
     .from(ideas)
     .where(and(...conditions))
     .orderBy(desc(ideas.createdAt));

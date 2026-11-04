@@ -70,7 +70,10 @@ ${REVIEW_CHECKS.map((check) => `  - ${check}: ${REVIEW_CHECK_LABELS[check]}`).jo
 Language: write the audience-facing text (title, premise, beginning, middle, ending, narration, scene titles, scene narration and dialogue lines) in the story language from the brief. Write everything production-facing (learningOutcome, character descriptions, setting, action, visualPrompt, productionNotes, soundEffects, musicMood and review notes) in English.`;
 
 export function formatBrief(input: StoryInput) {
-  const characters = input.characters.trim() || "None specified. Invent one to three original characters.";
+  // Production links characters to the library by name, so given names must come back unchanged.
+  const characters = input.characters.trim()
+    ? `${input.characters.trim()}\n(Use these names exactly as written and keep the given looks.)`
+    : "None specified. Invent one to three original characters.";
   const lines = [
     `Working title: ${input.title}`,
     `Target age: ${AGE_GROUP_LABELS[input.ageGroup]}`,

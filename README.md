@@ -187,10 +187,8 @@ Models (`src/lib/higgsfield.ts`), with only documented body fields:
 
 - Images: Soul (`/higgsfield-ai/soul/standard`, with aspect ratio and 1–4 variations) and Soul V2
   (`/higgsfield-ai/soul/v2/standard`, prompt only).
-- Video: Seedance 2.5 image-to-video and text-to-video (`/bytedance/seedance-2.5/...`, any length
-  from 4 to 30 s, 1080p, generated audio off because narration and music are produced separately),
-  Kling 2.5 Turbo Pro/Standard image-to-video and Pro text-to-video (5 or 10 s, negative prompt
-  supported), and Hailuo 2.3 Standard image-to-video and text-to-video (6 or 10 s).
+- Video: Wan 3.0 image-to-video, character-references-to-video and text-to-video
+  (`/alibaba/wan-3.0/...`, 2–30 s, 720p with native sound), plus Wan 3.0 on Replicate.
 - GPT Image isn't available: Higgsfield's API catalog has no GPT Image endpoint. It's only mentioned
   as the renderer behind Ads Studio. Use it in the Higgsfield web app and import the result.
 

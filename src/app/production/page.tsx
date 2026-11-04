@@ -14,6 +14,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { MODULES } from "@/lib/navigation";
 import { summarizeProgress } from "@/lib/production";
 import { getHiggsfieldConfig } from "@/server/providers/higgsfield";
+import { getReplicateConfig } from "@/server/providers/replicate";
 import {
   getStoriesAwaitingApprovalCount,
   getStoriesReadyForProduction,
@@ -151,6 +152,16 @@ async function ProductionData() {
                   </p>
                 </div>
               )}
+              <p>
+                {getReplicateConfig().configured ? (
+                  "Replicate connected · Wan 3.0 video models available."
+                ) : (
+                  <>
+                    Optional: add <code className="rounded bg-muted px-1">REPLICATE_API_TOKEN</code> to run Wan 3.0
+                    on your Replicate account.
+                  </>
+                )}
+              </p>
             </CardContent>
           </Card>
           <Card>

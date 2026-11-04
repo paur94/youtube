@@ -61,7 +61,7 @@ export const storyInputSchema = z.object({
     .transform((s) => s || null),
   title: z.string().trim().min(3, "Title must be at least 3 characters").max(120),
   ageGroup: z.enum(AGE_GROUPS, "Choose an age range"),
-  topic: z.string().trim().min(3, "Describe the topic in a few words").max(300),
+  topic: z.string().trim().min(3, "Describe the topic in a few words").max(2000),
   learningObjective: z
     .string()
     .trim()

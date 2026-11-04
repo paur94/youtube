@@ -33,6 +33,7 @@ import {
 import { formatDuration } from "@/lib/stories";
 import { getClaudeConfig } from "@/server/ai/claude";
 import { getHiggsfieldConfig } from "@/server/providers/higgsfield";
+import { getReplicateConfig } from "@/server/providers/replicate";
 import { getPlanQcOverview } from "@/server/qc/service";
 import { getPlan } from "@/server/queries/production";
 
@@ -131,7 +132,7 @@ async function PlanData({ params }: Pick<PageProps<"/production/[id]">, "params"
             <CardContent className="grid gap-3">
               <ProgressBar progress={progress} />
               <ProgressLegend progress={progress} />
-              <JobPoller planId={plan.id} active={higgsfield.configured ? activeApiJobs : 0} />
+              <JobPoller planId={plan.id} active={higgsfield.configured || getReplicateConfig().configured ? activeApiJobs : 0} />
             </CardContent>
           </Card>
 
@@ -201,7 +202,6 @@ async function PlanData({ params }: Pick<PageProps<"/production/[id]">, "params"
             <CardContent>
               <AssemblyPanel
                 planId={plan.id}
-                status={plan.status}
                 ready={isReadyForAssembly(plan.scenes)}
                 videoSceneIds={plan.scenes.filter((s) => s.status === "approved" && s.selected?.kind === "video").map((s) => s.id)}
               />

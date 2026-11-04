@@ -53,6 +53,8 @@ export const ideas = pgTable(
     id: uuid().primaryKey().defaultRandom(),
     title: text().notNull(),
     description: text().notNull().default(""),
+    // Carried into the story brief.
+    learningObjective: text().notNull().default(""),
     category: category().notNull().default("other"),
     sourceUrl: text(),
     status: ideaStatus().notNull().default("draft"),

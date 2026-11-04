@@ -100,14 +100,14 @@ async function DashboardData() {
     {
       label: "Videos in production",
       value: sum(counts, STAGE_GROUPS.videosInProduction),
-      hint: "Scripted or generated",
+      hint: "Story approved, scenes in production",
       icon: ClapperboardIcon,
       href: "/ideas?status=scripted",
     },
     {
       label: "Published videos",
       value: sum(counts, STAGE_GROUPS.published),
-      hint: "Marked as published",
+      hint: "Published on YouTube",
       icon: SendIcon,
       href: "/ideas?status=published",
     },

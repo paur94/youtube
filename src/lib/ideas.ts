@@ -79,6 +79,7 @@ export const ORIGINALITY_LABELS: Record<OriginalityStatus, string> = {
 export const ideaInputSchema = z.object({
   title: z.string().trim().min(3, "Title must be at least 3 characters").max(120),
   description: z.string().trim().max(2000).default(""),
+  learningObjective: z.string().trim().max(500).default(""),
   category: z.enum(CATEGORIES),
   sourceUrl: z
     .string()
@@ -87,7 +88,9 @@ export const ideaInputSchema = z.object({
     .default("")
     .refine((s) => s === "" || /^https?:\/\/\S+\.\S+/i.test(s), "Enter a full http(s) URL")
     .transform((s) => s || null),
-  status: z.enum(IDEA_STATUSES).default("draft"),
+  // Not in the form: the pipeline moves it forward, and the idea list menu changes it by hand.
+  // Left undefined so editing an idea never resets its status.
+  status: z.enum(IDEA_STATUSES).optional(),
   originalityStatus: z.enum(ORIGINALITY_STATUSES),
   ageGroup: z.enum(AGE_GROUPS),
   format: z.enum(VIDEO_FORMATS),
@@ -119,6 +122,7 @@ export function parseIdeaForm(formData: FormData) {
   return ideaInputSchema.safeParse({
     title: formData.get("title") ?? "",
     description: formData.get("description") ?? "",
+    learningObjective: formData.get("learningObjective") ?? "",
     category: formData.get("category"),
     sourceUrl: formData.get("sourceUrl") ?? "",
     status: formData.get("status") || undefined,

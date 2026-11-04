@@ -38,6 +38,7 @@ export function GenerationPanel({
   durationSeconds,
   defaults,
   apiConfigured,
+  replicateConfigured,
   hedraConfigured,
   prompt,
   negativePrompt,
@@ -51,6 +52,8 @@ export function GenerationPanel({
   durationSeconds: number;
   defaults: { imageModel: string; videoModel: string };
   apiConfigured: boolean;
+  /** Replicate serves the Wan 3.0 models marked provider "replicate". */
+  replicateConfigured: boolean;
   hedraConfigured: boolean;
   /** Full prompt including character descriptions and style. */
   prompt: string;
@@ -63,20 +66,27 @@ export function GenerationPanel({
   sceneReferenceCount: number;
   openManualJobs: { id: string; outputKind: AssetKind; label: string }[];
 }) {
+  const available = HIGGSFIELD_MODELS.filter((m) => (m.provider === "replicate" ? replicateConfigured : apiConfigured));
+  // The plan default may belong to a provider that isn't configured; fall back to the first available model.
+  const defaultFor = (k: AssetKind) => {
+    const wanted = k === "image" ? defaults.imageModel : defaults.videoModel;
+    return available.some((m) => m.id === wanted) ? wanted : (available.find((m) => m.output === k)?.id ?? wanted);
+  };
   const [kind, setKind] = useState<AssetKind>("image");
-  const [modelId, setModelId] = useState(defaults.imageModel);
+  const [modelId, setModelId] = useState(() => defaultFor("image"));
   const [startAssetId, setStartAssetId] = useState(startImages[0]?.id ?? "");
   const [numImages, setNumImages] = useState("2");
   const [pending, run] = useAction();
   const id = useId();
 
   const model = getHiggsfieldModel(modelId);
+  const providerName = model?.provider === "replicate" ? "Replicate" : "Higgsfield";
   const needsStart = model?.input === "image";
   const blocked = concerns.length > 0 || !prompt.trim();
 
   function switchKind(next: AssetKind) {
     setKind(next);
-    setModelId(next === "image" ? defaults.imageModel : defaults.videoModel);
+    setModelId(defaultFor(next));
   }
 
   return (
@@ -85,9 +95,9 @@ export function GenerationPanel({
       <section className="grid gap-3 rounded-lg border border-primary/30 p-4">
         <header className="flex items-center gap-2">
           <BotIcon className="size-4 text-primary" />
-          <h3 className="font-medium">Automated: Higgsfield API</h3>
+          <h3 className="font-medium">Automated: {apiConfigured && replicateConfigured ? "Higgsfield & Replicate APIs" : replicateConfigured ? "Replicate API" : "Higgsfield API"}</h3>
         </header>
-        {!apiConfigured ? (
+        {!apiConfigured && !replicateConfigured ? (
           <div className="flex items-start gap-2 text-sm text-muted-foreground">
             <KeyRoundIcon className="mt-0.5 size-4 shrink-0 text-amber-400" />
             <p>
@@ -97,7 +107,9 @@ export function GenerationPanel({
                 console.higgsfield.ai
               </a>{" "}
               to <code className="rounded bg-muted px-1">.env.local</code> and restart. API usage is billed
-              separately from a Higgsfield web subscription. Until then, use the manual workflow below.
+              separately from a Higgsfield web subscription. For Wan 3.0 on Replicate, add{" "}
+              <code className="rounded bg-muted px-1">REPLICATE_API_TOKEN</code> instead. Until then, use the manual
+              workflow below.
             </p>
           </div>
         ) : (
@@ -124,7 +136,7 @@ export function GenerationPanel({
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    {HIGGSFIELD_MODELS.filter((m) => m.output === kind).map((m) => (
+                    {available.filter((m) => m.output === kind).map((m) => (
                       <SelectItem key={m.id} value={m.id}>
                         {m.label}
                       </SelectItem>
@@ -203,11 +215,13 @@ export function GenerationPanel({
               }
             >
               <SparklesIcon />
-              {pending ? "Submitting…" : "Generate with Higgsfield"}
+              {pending ? "Submitting…" : `Generate with ${providerName}`}
             </Button>
             <p className="text-xs text-muted-foreground">
-              Uses your Higgsfield API balance. A cost estimate is requested first and shown on the job when Higgsfield
-              returns one. Results always need your review.
+              {model?.provider === "replicate"
+                ? "Bills your Replicate account per second of video; the estimate on the job uses Replicate's published price."
+                : "Uses your Higgsfield API balance. A cost estimate is requested first and shown on the job when Higgsfield returns one."}{" "}
+              Results always need your review.
             </p>
           </>
         )}

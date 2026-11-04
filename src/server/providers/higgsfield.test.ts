@@ -93,7 +93,7 @@ describe("Higgsfield client", () => {
     const { client, call } = setup(json({ usd: "0.094" }), json({ detail: "Not Found" }, 404));
     expect(await client.estimate("/higgsfield-ai/soul/v2/standard", { prompt: "x" })).toBeCloseTo(0.094);
     expect(call(0).url).toBe("https://api.higgsfield.ai/estimate/higgsfield-ai/soul/v2/standard");
-    expect(await client.estimate("/kling-video/v2.5-turbo/pro/text-to-video", { prompt: "x" })).toBeNull();
+    expect(await client.estimate("/alibaba/wan-3.0/text-to-video", { prompt: "x" })).toBeNull();
   });
 
   it("uploads to the presigned URL without sending credentials", async () => {

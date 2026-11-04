@@ -9,7 +9,8 @@ import { StoryForm } from "@/components/stories/story-form";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { MODULES } from "@/lib/navigation";
-import { getIdeaOptions } from "@/server/queries/stories";
+import { getCharacterOptions } from "@/server/queries/production";
+import { getIdeaOptions, getLastBriefDefaults } from "@/server/queries/stories";
 
 export const metadata: Metadata = { title: "New story" };
 
@@ -41,10 +42,15 @@ export default function NewStoryPage({ searchParams }: PageProps<"/stories/new">
 
 async function NewStoryForm({ searchParams }: Pick<PageProps<"/stories/new">, "searchParams">) {
   await connection();
-  const [ideas, params] = await Promise.all([getIdeaOptions(), searchParams]);
+  const [ideas, lastBrief, library, params] = await Promise.all([
+    getIdeaOptions(),
+    getLastBriefDefaults(),
+    getCharacterOptions(),
+    searchParams,
+  ]);
   const requested = Array.isArray(params.idea) ? params.idea[0] : params.idea;
   // Ignore unknown or archived ideas rather than failing.
   const initialIdeaId = ideas.some((i) => i.id === requested) ? requested : undefined;
 
-  return <StoryForm ideas={ideas} initialIdeaId={initialIdeaId} />;
+  return <StoryForm ideas={ideas} initialIdeaId={initialIdeaId} lastBrief={lastBrief} library={library} />;
 }

@@ -19,11 +19,11 @@ import {
 } from "@/db/schema";
 import { HEDRA_PROVIDER } from "@/lib/hedra";
 import { DEFAULT_IMAGE_MODEL, DEFAULT_VIDEO_MODEL, getHiggsfieldModel } from "@/lib/higgsfield";
+import { REPLICATE_PROVIDER } from "@/lib/replicate";
 import {
   ASPECT_RATIOS,
   ASSET_KINDS,
   buildGenerationPrompt,
-  isReadyForAssembly,
   moveInOrder,
   normalizeName,
   parseSceneForm,
@@ -33,12 +33,14 @@ import {
 import { extractLastFrame, FfmpegError } from "@/server/media/ffmpeg";
 import { downloadMedia, MediaError, saveMedia } from "@/server/media/storage";
 import { getHiggsfieldClient } from "@/server/providers/higgsfield";
+import { getReplicateClient } from "@/server/providers/replicate";
 import {
   addAsset,
   refreshActiveJobs,
   refreshApiJob,
   retryApiJob,
   submitApiGeneration,
+  syncPlanStatus,
   syncSceneStatus,
 } from "@/server/production/service";
 import { sceneGenerationBlockers, selectionBlocker } from "@/server/qc/service";
@@ -223,37 +225,6 @@ export async function updatePlanSettings(
   return { ok: true, message: "Production settings saved" };
 }
 
-// Final assembly needs a reviewed, approved asset for every scene. Nothing is rendered or
-// published by this step.
-export async function setPlanReady(planId: string, ready: boolean): Promise<ActionResult> {
-  const id = idSchema.safeParse(planId);
-  if (!id.success) return { ok: false, message: "Invalid plan id" };
-  try {
-    const scenes = await db
-      .select({ status: productionScenes.status })
-      .from(productionScenes)
-      .where(eq(productionScenes.planId, id.data));
-    if (ready && !isReadyForAssembly(scenes)) {
-      const pending = scenes.filter((s) => s.status !== "approved").length;
-      return {
-        ok: false,
-        message: scenes.length
-          ? `${pending} of ${scenes.length} scenes still need an approved final asset`
-          : "Add scenes first",
-      };
-    }
-    await db
-      .update(productionPlans)
-      .set({ status: ready ? "ready_for_assembly" : "in_production" })
-      .where(eq(productionPlans.id, id.data));
-  } catch (error) {
-    console.error("setPlanReady failed", error);
-    return { ok: false, message: DB_ERROR };
-  }
-  revalidateProduction(id.data);
-  return { ok: true, message: ready ? "Marked ready for assembly. Nothing was published." : "Moved back to production" };
-}
-
 // ---------- Scenes ----------
 
 export async function updateScene(sceneId: string, _prev: SceneFormState, formData: FormData): Promise<SceneFormState> {
@@ -300,10 +271,12 @@ export async function addScene(planId: string): Promise<ActionResult> {
         .select({ next: sql`coalesce(max(${productionScenes.position}), -1) + 1`.mapWith(Number) })
         .from(productionScenes)
         .where(eq(productionScenes.planId, id.data));
-      return tx
+      const rows = await tx
         .insert(productionScenes)
         .values({ planId: id.data, position: next, title: "New scene", durationSeconds: 5, status: "draft" })
         .returning({ id: productionScenes.id });
+      await syncPlanStatus(tx, id.data);
+      return rows;
     });
   } catch (error) {
     console.error("addScene failed", error);
@@ -325,6 +298,7 @@ export async function deleteScene(sceneId: string): Promise<ActionResult> {
         .returning({ planId: productionScenes.planId });
       if (!deleted) return null;
       await renumber(tx, deleted.planId);
+      await syncPlanStatus(tx, deleted.planId);
       return deleted.planId;
     });
   } catch (error) {
@@ -480,12 +454,14 @@ export async function cancelJob(jobId: string): Promise<ActionResult> {
       if (job.status !== "queued" || !job.externalRequestId) {
         return { ok: false, message: "Only queued requests can be canceled" };
       }
-      const client = getHiggsfieldClient();
-      if (!client) return { ok: false, message: "Higgsfield API is not configured" };
+      const replicate = job.provider === REPLICATE_PROVIDER;
+      const client = replicate ? getReplicateClient() : getHiggsfieldClient();
+      const label = replicate ? "Replicate" : "Higgsfield";
+      if (!client) return { ok: false, message: `${label} API is not configured` };
       try {
         await client.cancel(job.externalRequestId);
       } catch {
-        return { ok: false, message: "Higgsfield has already started this request, so it can't be canceled" };
+        return { ok: false, message: `${label} has already started this request, so it can't be canceled` };
       }
     } else if (job.status !== "awaiting_manual") {
       return { ok: false, message: "This manual job is already closed" };
