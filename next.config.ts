@@ -1,7 +1,8 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  /* config options here */
+  // Quick tunnels (cloudflared) used to reach the dev server over https, e.g. for TikTok's OAuth callback.
+  allowedDevOrigins: ["*.trycloudflare.com"],
   cacheComponents: true,
   partialPrefetching: true,
   turbopack: {

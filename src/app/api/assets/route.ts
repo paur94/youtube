@@ -22,6 +22,7 @@ const fieldsSchema = z
     replacesId: z.uuid().nullish(),
     model: z.string().trim().max(120).nullish(),
     durationSeconds: z.coerce.number().positive().max(3600).nullish(),
+    origin: z.enum(["higgsfield", "computer"]).nullish(),
   })
   .refine((f) => Boolean(f.sceneId) !== Boolean(f.characterId), "Upload to either a scene or a character");
 
@@ -52,9 +53,10 @@ export async function POST(request: Request) {
     replacesId: value("replacesId"),
     model: value("model"),
     durationSeconds: value("durationSeconds"),
+    origin: value("origin"),
   });
   if (!fields.success) return json(false, fields.error.issues[0].message);
-  const { sceneId, characterId, jobId, replacesId, model, durationSeconds } = fields.data;
+  const { sceneId, characterId, jobId, replacesId, model, durationSeconds, origin } = fields.data;
 
   let planId: string | null = null;
   try {
@@ -95,7 +97,7 @@ export async function POST(request: Request) {
         replacesId,
         kind: saved.kind,
         source: "manual_import",
-        provider: sceneId ? "Higgsfield (manual)" : "Upload",
+        provider: sceneId && origin !== "computer" ? "Higgsfield (manual)" : "Upload",
         model,
         filePath: saved.filePath,
         originalName: file.name.slice(0, 200),

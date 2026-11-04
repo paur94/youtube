@@ -439,6 +439,40 @@ and API projects that haven't passed Google's API compliance audit have their up
 **private**. The app tells you when YouTube kept a "publish now" upload private, so you can make it
 public in YouTube Studio. Captions and playlists are still added in YouTube Studio.
 
+### TikTok account connection (Settings) and posting
+
+Approved videos and Shorts can also be posted to one connected TikTok account with TikTok's
+Content Posting API (Direct Post). TikTok status is tracked separately from YouTube (`tiktok_posts`),
+so the same item can be on both.
+
+1. At [developers.tiktok.com](https://developers.tiktok.com/), create an app, add **Login Kit** and the
+   **Content Posting API** with **Direct Post** turned on, and request `user.info.basic` and
+   `video.publish`.
+2. Register `https://<your origin>/api/tiktok/callback` as a redirect URI. TikTok accepts **https
+   only**, so open the app through an https tunnel (for example `cloudflared tunnel --url
+   http://127.0.0.1:3000`) and use that origin, or set `TIKTOK_REDIRECT_URI`.
+3. Put `TIKTOK_CLIENT_KEY`, `TIKTOK_CLIENT_SECRET` and `TIKTOK_TOKEN_KEY` in `.env.local`, restart,
+   and click **Connect TikTok account** in Settings.
+
+**Post to TikTok** on the Publishing page follows TikTok's required posting UX: it reads the
+account's current options each time it opens, shows the account name and a preview, lets you edit
+the caption, has no preselected visibility, leaves comment/duet/stitch off until you tick them (and
+greys out what the account disabled), offers commercial-content disclosure (*Your brand* /
+*Branded content*), and shows TikTok's consent text before **Post**. The *AI-generated* label
+defaults to the idea's `containsSyntheticMedia`. Posting is asynchronous: **Check TikTok** reads the
+status and records the public link once TikTok has published and moderated it.
+
+TikTok's limits to know about: until TikTok audits the app, posts can only be **Only me** and the
+TikTok account must be private (and at most 5 accounts can post per day). Videos sent through the
+API can be up to 10 minutes. Access tokens last 2 hours and are refreshed automatically; the
+authorization itself lasts 180 days, after which you reconnect (Settings warns two weeks ahead).
+Tokens are AES-256-GCM encrypted with `TIKTOK_TOKEN_KEY` in `tiktok_connections`.
+
+Monetization is not something the API controls: TikTok's Creator Rewards Program is joined in the
+TikTok app once the account qualifies (18+, 10,000 followers, 100,000 views in the last 30 days, an
+eligible country), and it only pays for original videos **longer than one minute**. The post dialog
+says whether an item is long enough. TikTok has no "made for kids" setting and requires users to be 13+.
+
 ### Analytics (`/analytics`)
 
 One row per Short with the latest snapshot of views, average view duration, viewed vs swiped away,

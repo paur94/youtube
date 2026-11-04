@@ -7,12 +7,12 @@ import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:
 
 const VERSION = "v1";
 
-/** 32-byte key from YOUTUBE_TOKEN_KEY: base64 of 32 bytes, or any passphrase of 32+ characters. */
-export function deriveTokenKey(secret: string) {
+/** 32-byte key from YOUTUBE_TOKEN_KEY (or `name`): base64 of 32 bytes, or any passphrase of 32+ characters. */
+export function deriveTokenKey(secret: string, name = "YOUTUBE_TOKEN_KEY") {
   const trimmed = secret.trim();
   const decoded = Buffer.from(trimmed, "base64");
   if (decoded.length === 32 && /^[A-Za-z0-9+/_-]+={0,2}$/.test(trimmed)) return decoded;
-  if (trimmed.length < 32) throw new Error("YOUTUBE_TOKEN_KEY must be 32 random bytes in base64, or at least 32 characters.");
+  if (trimmed.length < 32) throw new Error(`${name} must be 32 random bytes in base64, or at least 32 characters.`);
   return createHash("sha256").update(trimmed).digest();
 }
 

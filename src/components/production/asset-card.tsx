@@ -2,6 +2,7 @@
 
 import {
   CheckCircle2Icon,
+  SkipForwardIcon,
   StarIcon,
   UserRoundCheckIcon,
   StarOffIcon,
@@ -29,7 +30,13 @@ import { IssueCounts, QcIssueList } from "@/components/qc/qc-issue-list";
 import { VisionBadge } from "@/components/qc/vision-badge";
 import { ASSET_SOURCE_LABELS, type AssetKind, type AssetSource, type AssetStatus } from "@/lib/production";
 import type { QcIssue, VisionStatus } from "@/lib/story-qc";
-import { deleteSceneAsset, reviewAsset, selectSceneAsset, setSceneImageAsReference } from "@/server/actions/production";
+import {
+  deleteSceneAsset,
+  reviewAsset,
+  selectSceneAsset,
+  sendLastFrameToNextScene,
+  setSceneImageAsReference,
+} from "@/server/actions/production";
 
 import { AssetPreview } from "./asset-preview";
 import { AssetStatusBadge, ModeBadge } from "./badges";
@@ -211,6 +218,18 @@ export function AssetCard({
             >
               <UserRoundCheckIcon />
               Use as character reference
+            </Button>
+          )}
+          {asset.status === "approved" && asset.kind === "video" && asset.sceneId && asset.filePath && (
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={pending}
+              title="Saves this clip's last frame as the next scene's start image, so the cut is seamless"
+              onClick={() => run(() => sendLastFrameToNextScene(asset.id))}
+            >
+              <SkipForwardIcon />
+              Last frame to next scene
             </Button>
           )}
           {asset.status === "approved" && (

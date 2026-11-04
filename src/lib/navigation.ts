@@ -87,7 +87,7 @@ export const MODULES = {
     href: "/publishing",
     label: "Publishing",
     icon: SendIcon,
-    description: "Schedule and publish approved videos and Shorts to YouTube, only when you confirm each one",
+    description: "Schedule and publish approved videos and Shorts to YouTube and TikTok, only when you confirm each one",
     ready: true,
   },
   analytics: {

@@ -48,6 +48,7 @@ export function ImportAssetDialog({
   title = "Import a generated asset",
   description,
   variant = "outline",
+  origin = "higgsfield",
 }: {
   target: Target;
   /** Open manual job this file completes. */
@@ -57,6 +58,8 @@ export function ImportAssetDialog({
   title?: string;
   description?: string;
   variant?: "outline" | "default" | "ghost";
+  /** "computer" is for files made outside Higgsfield: file upload only, recorded with the "Upload" provider. */
+  origin?: "higgsfield" | "computer";
 }) {
   const [open, setOpen] = useState(false);
   const [mode, setMode] = useState<"file" | "url">("file");
@@ -67,6 +70,7 @@ export function ImportAssetDialog({
   const router = useRouter();
   const id = useId();
   const forScene = Boolean(target.sceneId);
+  const fileOnly = !forScene || origin === "computer";
 
   function reset() {
     setFile(null);
@@ -78,7 +82,7 @@ export function ImportAssetDialog({
     startTransition(async () => {
       try {
         let result: { ok: boolean; message: string };
-        if (mode === "url" && target.sceneId) {
+        if (mode === "url" && !fileOnly && target.sceneId) {
           result = await importAssetFromUrl({ sceneId: target.sceneId, url, jobId, replacesId, model: model || null });
         } else {
           if (!file) return;
@@ -89,6 +93,7 @@ export function ImportAssetDialog({
           if (jobId) form.set("jobId", jobId);
           if (replacesId) form.set("replacesId", replacesId);
           if (model) form.set("model", model);
+          if (forScene) form.set("origin", origin);
           const duration = await readVideoDuration(file);
           if (duration) form.set("durationSeconds", String(duration));
           const response = await fetch("/api/assets", { method: "POST", body: form });
@@ -130,7 +135,7 @@ export function ImportAssetDialog({
             </DialogDescription>
           </DialogHeader>
 
-          {forScene && (
+          {!fileOnly && (
             <div className="flex gap-1 rounded-lg bg-muted p-1 text-sm" role="tablist">
               {(["file", "url"] as const).map((m) => (
                 <button
@@ -147,7 +152,7 @@ export function ImportAssetDialog({
             </div>
           )}
 
-          {mode === "file" || !forScene ? (
+          {mode === "file" || fileOnly ? (
             <div className="grid gap-1.5">
               <Label htmlFor={`${id}-file`}>File</Label>
               <Input
@@ -185,7 +190,7 @@ export function ImportAssetDialog({
                 maxLength={120}
                 value={model}
                 onChange={(e) => setModel(e.target.value)}
-                placeholder="e.g. Kling 2.5 Turbo in the Higgsfield app"
+                placeholder={origin === "computer" ? "e.g. Midjourney, Runway, my own footage" : "e.g. Kling 2.5 Turbo in the Higgsfield app"}
               />
             </div>
           )}
@@ -194,7 +199,7 @@ export function ImportAssetDialog({
             <Button variant="outline" onClick={() => setOpen(false)}>
               Cancel
             </Button>
-            <Button disabled={pending || (mode === "file" || !forScene ? !file : !url.trim())} onClick={submit}>
+            <Button disabled={pending || (mode === "file" || fileOnly ? !file : !url.trim())} onClick={submit}>
               {pending ? "Importing…" : "Import"}
             </Button>
           </DialogFooter>

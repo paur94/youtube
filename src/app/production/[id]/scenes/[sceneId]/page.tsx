@@ -101,10 +101,16 @@ async function SceneData({ params }: Pick<Props, "params">) {
     hasReference: detail.references.some((r) => r.characterId === c.id),
   }));
   const sceneReferenceIds = qc.current.continuity.referenceAssetIds.filter((refId) => referenceCandidates.some((c) => c.id === refId));
+  // The previous scene's last frame comes first, so it's the default start and the cut is seamless.
+  const lastFrameOf = (a: (typeof detail.assets)[number]) => a.metadata?.lastFrameOfScene;
   const startImages = [
     ...detail.assets
       .filter((a) => a.kind === "image" && a.status === "approved")
-      .map((a) => ({ id: a.id, label: `Scene keyframe r${a.revision}` })),
+      .sort((a, b) => Number(lastFrameOf(b) !== undefined) - Number(lastFrameOf(a) !== undefined))
+      .map((a) => ({
+        id: a.id,
+        label: lastFrameOf(a) !== undefined ? `Last frame of scene ${lastFrameOf(a)} r${a.revision}` : `Scene keyframe r${a.revision}`,
+      })),
     ...detail.references.map((r) => ({ id: r.id, label: `${r.characterName} reference` })),
   ];
   // Picked scene references can be start frames too, even while still awaiting review.

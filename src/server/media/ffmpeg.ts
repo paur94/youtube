@@ -1,7 +1,7 @@
 import "server-only";
 
 import { execFile, spawn } from "node:child_process";
-import { mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -255,6 +255,28 @@ export async function extractFrames(relativePath: string, times: number[], width
     frames.push({ time, jpeg });
   }
   return frames;
+}
+
+/**
+ * The clip's final frame as a full-size PNG, to start the next scene from. Decodes the last half
+ * second and keeps overwriting one file, so whatever frame comes last wins.
+ */
+export async function extractLastFrame(relativePath: string) {
+  const { ffmpeg } = getFfmpegPaths();
+  const dir = await mkdtemp(path.join(tmpdir(), "last-frame-"));
+  const output = path.join(dir, "frame.png");
+  try {
+    await run(ffmpeg, [
+      "-hide_banner", "-nostdin", "-loglevel", "error",
+      "-sseof", "-0.5", "-i", absolute(relativePath),
+      "-an", "-update", "1", "-y", output,
+    ]);
+    const png = await readFile(output).catch(() => null);
+    if (!png?.length) throw new FfmpegError("FFmpeg produced no image");
+    return png;
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 }
 
 /** A still image (e.g. a reference) shrunk to a small JPEG. */

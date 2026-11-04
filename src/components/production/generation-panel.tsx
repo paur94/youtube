@@ -1,6 +1,6 @@
 "use client";
 
-import { BotIcon, ExternalLinkIcon, HandIcon, KeyRoundIcon, SparklesIcon, TriangleAlertIcon } from "lucide-react";
+import { BotIcon, ExternalLinkIcon, HandIcon, HardDriveUploadIcon, KeyRoundIcon, SparklesIcon, TriangleAlertIcon } from "lucide-react";
 import Link from "next/link";
 import { useId, useState } from "react";
 
@@ -260,6 +260,25 @@ export function GenerationPanel({
           )}
           <ImportAssetDialog target={{ sceneId }} label="Import without a job" variant="ghost" />
         </div>
+      </section>
+
+      {/* Upload */}
+      <section className="grid gap-3 rounded-lg border p-4">
+        <header className="flex items-center gap-2">
+          <HardDriveUploadIcon className="size-4 text-muted-foreground" />
+          <h3 className="font-medium">Upload from computer</h3>
+        </header>
+        <p className="text-sm text-muted-foreground">
+          Add an image or clip you made with another tool or already have on disk. It&apos;s copied into the media
+          folder and marked “Needs review” like any other result.
+        </p>
+        <ImportAssetDialog
+          target={{ sceneId }}
+          origin="computer"
+          label="Upload file"
+          title="Upload a scene asset"
+          description="Choose an image or video from your computer. It's copied into the local media folder and marked “Needs review”."
+        />
       </section>
     </div>
   );

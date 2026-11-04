@@ -7,9 +7,11 @@ import { PageHeader } from "@/components/page-header";
 import { dateTimeFormat } from "@/components/production/format";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
+import { ConnectTikTokButton, DisconnectTikTokButton } from "@/components/tiktok/connection-actions";
 import { ConnectYouTubeButton, DisconnectYouTubeButton } from "@/components/youtube/connection-actions";
 import { SAMPLE_IDEAS } from "@/lib/sample-ideas";
 import { MODULES } from "@/lib/navigation";
+import { authorizationExpiresSoon, parseTikTokConnectOutcome, TIKTOK_CONNECT_OUTCOMES } from "@/lib/tiktok";
 import { cn } from "@/lib/utils";
 import { parseConnectOutcome, YOUTUBE_CONNECT_OUTCOMES } from "@/lib/youtube";
 import { getClaudeConfig } from "@/server/ai/claude";
@@ -17,8 +19,10 @@ import { getFfmpegVersion } from "@/server/media/ffmpeg";
 import { getMediaRoot } from "@/server/media/storage";
 import { getHedraConfig } from "@/server/providers/hedra";
 import { getHiggsfieldConfig } from "@/server/providers/higgsfield";
+import { getTikTokConfig } from "@/server/providers/tiktok";
 import { getYouTubeConfig } from "@/server/providers/youtube";
 import { getSampleIdeaCount } from "@/server/queries/ideas";
+import { getTikTokConnection } from "@/server/tiktok/connection";
 import { getYouTubeConnection } from "@/server/youtube/connection";
 
 export const metadata: Metadata = { title: MODULES.settings.label };
@@ -44,6 +48,21 @@ export default function SettingsPage({ searchParams }: PageProps<"/settings">) {
           <CardContent>
             <Suspense fallback={<Skeleton className="h-16 rounded-lg" />}>
               <YouTubeStatus searchParams={searchParams} />
+            </Suspense>
+          </CardContent>
+        </Card>
+
+        <Card className="lg:col-span-2">
+          <CardHeader>
+            <CardTitle>TikTok account</CardTitle>
+            <CardDescription>
+              Lets you post approved videos and Shorts from the Publishing page. Each post is sent only after you fill in
+              TikTok&apos;s post form and confirm it. Credentials and tokens stay on this server.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Suspense fallback={<Skeleton className="h-16 rounded-lg" />}>
+              <TikTokStatus searchParams={searchParams} />
             </Suspense>
           </CardContent>
         </Card>
@@ -195,6 +214,70 @@ async function YouTubeStatus({ searchParams }: Pick<PageProps<"/settings">, "sea
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-background/40 p-3">
           <p className="text-sm text-muted-foreground">No channel connected. You&apos;ll choose the channel on Google&apos;s consent screen.</p>
           <ConnectYouTubeButton />
+        </div>
+      )}
+    </div>
+  );
+}
+
+async function TikTokStatus({ searchParams }: Pick<PageProps<"/settings">, "searchParams">) {
+  await connection();
+  const outcome = parseTikTokConnectOutcome((await searchParams).tiktok);
+  const config = getTikTokConfig();
+  const account = config.configured ? await getTikTokConnection() : null;
+  const notice = outcome ? TIKTOK_CONNECT_OUTCOMES[outcome] : null;
+  const expiresSoon = account !== null && authorizationExpiresSoon(account.refreshTokenExpiresAt);
+
+  return (
+    <div className="grid gap-3">
+      {notice && (
+        <p
+          role="status"
+          className={cn(
+            "rounded-lg border p-3 text-sm",
+            notice.ok ? "border-emerald-500/40 bg-emerald-500/10" : "border-rose-500/40 bg-rose-500/10",
+          )}
+        >
+          {notice.message}
+        </p>
+      )}
+      {!config.configured ? (
+        <div className="grid gap-2 rounded-lg border bg-background/40 p-3 text-sm">
+          <p>
+            Not configured. Missing in <code>.env.local</code>: {config.missing.join(", ")}.
+          </p>
+          <p className="text-muted-foreground">
+            Create an app at developers.tiktok.com with Login Kit and the Content Posting API (Direct Post on), and register{" "}
+            <code>{"<https origin>"}/api/tiktok/callback</code> as a redirect URI. TikTok only accepts https, so open this app
+            through an https tunnel or set <code>TIKTOK_REDIRECT_URI</code>. See the README.
+          </p>
+        </div>
+      ) : account ? (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-background/40 p-3">
+          <div className="flex items-center gap-3">
+            {account.avatarUrl && (
+              // eslint-disable-next-line @next/next/no-img-element -- remote avatar, no image optimisation needed
+              <img src={account.avatarUrl} alt="" className="size-10 rounded-full" referrerPolicy="no-referrer" />
+            )}
+            <div className="text-sm">
+              <p className="font-medium">{account.displayName}</p>
+              <p className="text-muted-foreground">
+                {account.username ? `@${account.username}` : account.openId} · connected {dateTimeFormat.format(account.connectedAt)}
+              </p>
+              {expiresSoon && (
+                <p className="text-amber-400">Authorization expires {dateTimeFormat.format(account.refreshTokenExpiresAt)}: reconnect before then.</p>
+              )}
+            </div>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <ConnectTikTokButton reconnect />
+            <DisconnectTikTokButton displayName={account.displayName} />
+          </div>
+        </div>
+      ) : (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-background/40 p-3">
+          <p className="text-sm text-muted-foreground">No account connected. You&apos;ll sign in to TikTok and approve access.</p>
+          <ConnectTikTokButton />
         </div>
       )}
     </div>

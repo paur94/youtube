@@ -30,7 +30,8 @@ import {
   type SceneFormState,
   scenesFromStory,
 } from "@/lib/production";
-import { downloadMedia, MediaError } from "@/server/media/storage";
+import { extractLastFrame, FfmpegError } from "@/server/media/ffmpeg";
+import { downloadMedia, MediaError, saveMedia } from "@/server/media/storage";
 import { getHiggsfieldClient } from "@/server/providers/higgsfield";
 import {
   addAsset,
@@ -788,4 +789,87 @@ export async function setSceneImageAsReference(assetId: string): Promise<ActionR
   revalidatePath("/characters");
   revalidatePath("/production", "layout");
   return { ok: outcome.ok, message: outcome.message } as ActionResult;
+}
+
+/**
+ * Saves the last frame of an approved scene clip as an image of the next scene, so the next clip
+ * can start exactly where this one ends. The frame comes from a clip a person already approved, so
+ * it's approved too and shows up first in the next scene's start images.
+ */
+export async function sendLastFrameToNextScene(assetId: string): Promise<ActionResult> {
+  const id = idSchema.safeParse(assetId);
+  if (!id.success) return { ok: false, message: "Invalid asset" };
+
+  let source: typeof assets.$inferSelect | undefined;
+  let next: { id: string; position: number } | undefined;
+  let position = -1;
+  try {
+    [source] = await db.select().from(assets).where(eq(assets.id, id.data));
+    if (!source?.sceneId) return { ok: false, message: "Asset not found" };
+    const [scene] = await db
+      .select({ planId: productionScenes.planId })
+      .from(productionScenes)
+      .where(eq(productionScenes.id, source.sceneId));
+    if (!scene) return { ok: false, message: "Scene not found" };
+    const siblings = await db
+      .select({ id: productionScenes.id, position: productionScenes.position })
+      .from(productionScenes)
+      .where(eq(productionScenes.planId, scene.planId))
+      .orderBy(asc(productionScenes.position), asc(productionScenes.createdAt));
+    position = siblings.findIndex((s) => s.id === source!.sceneId);
+    next = siblings[position + 1];
+  } catch (error) {
+    console.error("sendLastFrameToNextScene failed", error);
+    return { ok: false, message: DB_ERROR };
+  }
+  if (source.kind !== "video" || source.status !== "approved") {
+    return { ok: false, message: "Approve the clip before using its last frame" };
+  }
+  if (!source.filePath) return { ok: false, message: "The clip isn't stored locally" };
+  if (!next) return { ok: false, message: "This is the last scene" };
+  const nextScene = next;
+
+  let saved: Awaited<ReturnType<typeof saveMedia>>;
+  try {
+    const png = await extractLastFrame(source.filePath);
+    saved = await saveMedia(new Uint8Array(png), "image/png", `scenes/${nextScene.id}`);
+  } catch (error) {
+    return {
+      ok: false,
+      message: error instanceof FfmpegError || error instanceof MediaError ? error.message : "Could not read the clip's last frame",
+    };
+  }
+
+  const sceneNumber = position + 1;
+  try {
+    await db.transaction(async (tx) => {
+      const row = await addAsset(tx, {
+        sceneId: nextScene.id,
+        kind: "image",
+        source: source.source,
+        provider: source.provider,
+        model: source.model,
+        filePath: saved.filePath,
+        contentType: saved.contentType,
+        sizeBytes: saved.sizeBytes,
+        metadata: { lastFrameOfAssetId: source.id, lastFrameOfScene: sceneNumber },
+      });
+      await tx
+        .update(assets)
+        .set({
+          status: "approved",
+          reviewedAt: new Date(),
+          reviewNotes: `Last frame of scene ${sceneNumber} r${source.revision}`,
+        })
+        .where(eq(assets.id, row.id));
+      await syncSceneStatus(tx, nextScene.id);
+    });
+  } catch (error) {
+    console.error("sendLastFrameToNextScene failed", error);
+    return { ok: false, message: DB_ERROR };
+  }
+  const planId = await planIdOfScene(nextScene.id).catch(() => null);
+  revalidateProduction(planId ?? undefined, nextScene.id);
+  if (planId) revalidatePath(`/production/${planId}/scenes/${source.sceneId}`);
+  return { ok: true, message: `Saved as scene ${sceneNumber + 1}'s start image` };
 }

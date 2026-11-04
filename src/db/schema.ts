@@ -38,6 +38,7 @@ import type { AudioLevels, MediaProbe } from "../lib/short-video";
 import type { PlanContinuity, SceneContinuity } from "../lib/story-qc";
 import { type CaptionCue, SHORT_STATUSES, type ShortAnalysis, type TrafficSource, type VideoSettings } from "../lib/shorts";
 import { REVISION_SOURCES, STORY_STATUSES, type StoryContent, type StoryScene } from "../lib/stories";
+import { TIKTOK_POST_STATES } from "../lib/tiktok";
 
 export const ideaStatus = pgEnum("idea_status", IDEA_STATUSES);
 export const ageGroup = pgEnum("age_group", AGE_GROUPS);
@@ -527,3 +528,59 @@ export const youtubeConnections = pgTable("youtube_connections", {
 });
 
 export type YouTubeConnection = typeof youtubeConnections.$inferSelect;
+
+// ---------- TikTok ----------
+
+// The connected TikTok account (at most one row). Tokens are AES-256-GCM encrypted with TIKTOK_TOKEN_KEY
+// and never leave the server.
+export const tiktokConnections = pgTable("tiktok_connections", {
+  id: uuid().primaryKey().defaultRandom(),
+  openId: text().notNull().unique(),
+  username: text(),
+  displayName: text().notNull(),
+  avatarUrl: text(),
+  scopes: text().array().notNull().default([]),
+  refreshToken: text().notNull(),
+  refreshTokenExpiresAt: timestamp({ withTimezone: true }).notNull(),
+  accessToken: text(),
+  accessTokenExpiresAt: timestamp({ withTimezone: true }),
+  connectedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp({ withTimezone: true })
+    .notNull()
+    .defaultNow()
+    .$onUpdate(() => new Date()),
+});
+
+export const tiktokPostState = pgEnum("tiktok_post_state", TIKTOK_POST_STATES);
+
+// The latest TikTok post of a Short or a video (exactly one of shortId / videoId is set). Kept apart
+// from the YouTube status: the same Short can be on both platforms.
+export const tiktokPosts = pgTable(
+  "tiktok_posts",
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    shortId: uuid().references(() => shorts.id, { onDelete: "cascade" }),
+    videoId: uuid().references(() => videos.id, { onDelete: "cascade" }),
+    // "uploading" also guards against two posts of the same item at once.
+    state: tiktokPostState().notNull().default("uploading"),
+    openId: text().notNull(),
+    publishId: text(),
+    // TikTok's own status, e.g. PROCESSING_UPLOAD or PUBLISH_COMPLETE.
+    tiktokStatus: text(),
+    privacyLevel: text().notNull(),
+    caption: text().notNull(),
+    postId: text(),
+    url: text(),
+    error: text(),
+    uploadStartedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+    publishedAt: timestamp({ withTimezone: true }),
+    createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp({ withTimezone: true })
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+  (t) => [uniqueIndex().on(t.shortId), uniqueIndex().on(t.videoId)],
+);
+
+export type TikTokPost = typeof tiktokPosts.$inferSelect;

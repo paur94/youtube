@@ -8,6 +8,7 @@ import { PageHeader } from "@/components/page-header";
 import { dateTimeFormat } from "@/components/production/format";
 import { ShortStatusBadge } from "@/components/shorts/badges";
 import { QueueActions, YouTubeMetadataButton } from "@/components/shorts/queue-actions";
+import { TikTokActions, TikTokStatusLine } from "@/components/tiktok/tiktok-actions";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -16,9 +17,12 @@ import { computeTimeline, formatTimestamp, uploadDescription } from "@/lib/long-
 import { MODULES } from "@/lib/navigation";
 import { mediaUrl } from "@/lib/production";
 import { buildYouTubeMetadata, isOverdue, SHORT_STATUS_LABELS, SHORT_STATUSES } from "@/lib/shorts";
+import { getTikTokConfig } from "@/server/providers/tiktok";
 import { getYouTubeConfig } from "@/server/providers/youtube";
 import { getPublishingQueue, getShortStatusCounts, isRenderCurrent } from "@/server/queries/shorts";
+import { getTikTokPosts } from "@/server/queries/tiktok";
 import { getVideoPublishingQueue, isVideoRenderCurrent } from "@/server/queries/videos";
+import { getTikTokConnection } from "@/server/tiktok/connection";
 import { getYouTubeConnection } from "@/server/youtube/connection";
 
 export const metadata: Metadata = { title: MODULES.publishing.label };
@@ -37,11 +41,14 @@ export default function PublishingPage() {
 async function QueueData() {
   await connection();
   const youtube = getYouTubeConfig();
-  const [queue, videoQueue, counts, channel] = await Promise.all([
+  const tiktok = getTikTokConfig();
+  const [queue, videoQueue, counts, channel, tiktokAccount, tiktokPosts] = await Promise.all([
     getPublishingQueue(),
     getVideoPublishingQueue(),
     getShortStatusCounts(),
     youtube.configured ? getYouTubeConnection() : null,
+    tiktok.configured ? getTikTokConnection() : null,
+    getTikTokPosts(),
   ]);
 
   return (
@@ -73,6 +80,20 @@ async function QueueData() {
                 connect one in Settings
               </Link>
               , or upload in YouTube Studio and mark it published here.
+            </>
+          )}{" "}
+          {tiktokAccount ? (
+            <>
+              TikTok posts go to <span className="font-medium text-foreground">{tiktokAccount.displayName}</span>; each one opens
+              TikTok&apos;s post form first.
+            </>
+          ) : (
+            <>
+              To post on TikTok too,{" "}
+              <Link href="/settings" className="text-primary hover:underline">
+                connect a TikTok account
+              </Link>
+              .
             </>
           )}
         </p>
@@ -121,6 +142,7 @@ async function QueueData() {
                   });
                   const overdue = isOverdue(video.status, video.scheduledAt);
                   const stale = !isVideoRenderCurrent(video);
+                  const tiktokPost = tiktokPosts.get(video.id);
                   return (
                     <TableRow key={video.id}>
                       <TableCell className="max-w-72">
@@ -134,6 +156,7 @@ async function QueueData() {
                         {video.status === "failed" && video.publishError && (
                           <p className="text-xs whitespace-normal text-orange-400">{video.publishError}</p>
                         )}
+                        {tiktokPost && <TikTokStatusLine state={tiktokPost.state} url={tiktokPost.url} error={tiktokPost.error} />}
                         {stale && video.status !== "published" && (
                           <p className="flex items-center gap-1 text-xs text-amber-400">
                             <TriangleAlertIcon className="size-3" />
@@ -199,6 +222,14 @@ async function QueueData() {
                             uploaded={video.youtubeVideoId !== null}
                             channelTitle={channel?.channelTitle ?? null}
                           />
+                          <TikTokActions
+                            kind="video"
+                            id={video.id}
+                            title={video.title}
+                            videoUrl={video.renderFilePath ? mediaUrl(video.renderFilePath) : null}
+                            state={tiktokPost?.state ?? null}
+                            connected={tiktokAccount !== null}
+                          />
                         </div>
                       </TableCell>
                     </TableRow>
@@ -252,6 +283,7 @@ async function QueueData() {
                   });
                   const overdue = isOverdue(short.status, short.scheduledAt);
                   const stale = !isRenderCurrent(short);
+                  const tiktokPost = tiktokPosts.get(short.id);
                   return (
                     <TableRow key={short.id}>
                       <TableCell className="text-muted-foreground tabular-nums">{short.publishOrder ?? "–"}</TableCell>
@@ -266,6 +298,7 @@ async function QueueData() {
                         {short.status === "failed" && short.publishError && (
                           <p className="text-xs whitespace-normal text-orange-400">{short.publishError}</p>
                         )}
+                        {tiktokPost && <TikTokStatusLine state={tiktokPost.state} url={tiktokPost.url} error={tiktokPost.error} />}
                         {stale && short.status !== "published" && (
                           <p className="flex items-center gap-1 text-xs text-amber-400">
                             <TriangleAlertIcon className="size-3" />
@@ -327,6 +360,14 @@ async function QueueData() {
                             scheduledAt={short.scheduledAt?.toISOString() ?? null}
                             uploaded={short.youtubeVideoId !== null}
                             channelTitle={channel?.channelTitle ?? null}
+                          />
+                          <TikTokActions
+                            kind="short"
+                            id={short.id}
+                            title={short.title}
+                            videoUrl={short.renderFilePath ? mediaUrl(short.renderFilePath) : null}
+                            state={tiktokPost?.state ?? null}
+                            connected={tiktokAccount !== null}
                           />
                         </div>
                       </TableCell>
