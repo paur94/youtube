@@ -22,7 +22,7 @@ export const REVISION_SOURCE_LABELS: Record<RevisionSource, string> = {
   restored: "Restored",
 };
 
-export const DURATION_PRESETS = [45, 60, 120, 180, 300, 480, 600, 900] as const;
+export const DURATION_PRESETS = [30, 45, 60, 120, 180, 300, 480, 600, 900] as const;
 
 export function formatDuration(seconds: number) {
   const s = Math.max(0, Math.round(seconds));
