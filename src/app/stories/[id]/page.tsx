@@ -23,7 +23,7 @@ import { summarizeUsage } from "@/lib/ai-usage";
 import { AGE_GROUP_LABELS } from "@/lib/ideas";
 import { MODULES } from "@/lib/navigation";
 import { formatDuration } from "@/lib/stories";
-import { getClaudeConfig } from "@/server/ai/claude";
+import { getOpenAIConfig } from "@/server/ai/openai";
 import { getCharacterOptions, getPlanIdForStory } from "@/server/queries/production";
 import {
   getIdeaOptions,
@@ -83,7 +83,7 @@ async function StoryData({ params }: Pick<PageProps<"/stories/[id]">, "params">)
     getPlanIdForStory(id),
     getCharacterOptions(),
   ]);
-  const claude = getClaudeConfig();
+  const writer = getOpenAIConfig();
   const usage = summarizeUsage(generations);
 
   const brief: [string, string][] = [
@@ -126,7 +126,7 @@ async function StoryData({ params }: Pick<PageProps<"/stories/[id]">, "params">)
             content={story.content}
             latestRevision={revisions[0]?.number ?? null}
             targetDurationSeconds={story.targetDurationSeconds}
-            claude={{ configured: claude.configured, model: claude.model }}
+            writer={{ configured: writer.configured, model: writer.model }}
           />
         </div>
 

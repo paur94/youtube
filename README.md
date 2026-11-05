@@ -19,20 +19,21 @@ npm run db:migrate                  # apply migrations (includes Story Workshop,
 npm run dev                         # http://localhost:3000
 ```
 
-### Claude API setup (Story Workshop)
+### OpenAI API setup (Story Workshop)
 
-Story generation calls the Anthropic Messages API from the server only. Without a key the Story
+Story generation calls the OpenAI Responses API from the server only. Without a key the Story
 Workshop still works for writing and editing briefs; the Generate buttons are disabled and the
-page explains what's missing.
+page explains what's missing. Story QC, the Shorts Studio and video copy still use Claude
+(`ANTHROPIC_API_KEY`, see `.env.example`).
 
-1. Create an API key at <https://console.anthropic.com/settings/keys>.
+1. Create an API key at <https://platform.openai.com/api-keys>.
 2. Put it in `.env.local` (never in `.env.example`, never with a `NEXT_PUBLIC_` prefix):
 
    ```dotenv
-   ANTHROPIC_API_KEY=sk-ant-...
+   OPENAI_API_KEY=sk-...
    # Optional:
-   # ANTHROPIC_MODEL=claude-opus-5-5     # default
-   # ANTHROPIC_EFFORT=medium             # low | medium | high | xhigh | max
+   # OPENAI_MODEL=gpt-6.1-sol    # default
+   # OPENAI_EFFORT=medium        # none | minimal | low | medium | high | xhigh
    ```
 
 3. Restart `npm run dev`. **Settings → Workspace** and the Story Workshop page show the API as
@@ -52,7 +53,7 @@ Production build: `npm run build` then `npm run start`.
 | --- | --- |
 | Dashboard | Total ideas, stories in progress, videos in production, published videos, production pipeline, recent projects, quick actions |
 | Idea Discovery | Create, edit, delete, change status; search (title, description, tags); filters for workflow status, category, age range, priority and originality review; filters live in the URL; **Start story** from any idea's menu |
-| Story Workshop | Briefs from an idea or from scratch; Claude generation, revision with notes and fresh versions; editable preview; revision history with restore; manual approval; token usage and cost estimates |
+| Story Workshop | Briefs from an idea or from scratch; GPT-6.1 Sol generation, revision with notes and fresh versions; editable preview; revision history with restore; manual approval; token usage and cost estimates |
 | Production Studio | Production plans from approved stories; scene editing and reordering; per-scene status; Higgsfield API generation with polling, retries and timeouts; manual generate-and-import workflow; asset review and final selection; progress and cost estimates; ready-for-assembly gate |
 | Characters | Reusable character library with consistent visual descriptions, reference images, approval for reuse, appearances across stories |
 | Asset library | All scene images and clips with preview, provider, model, date, duration, size, file location and review status; filters in the URL |
@@ -74,16 +75,16 @@ Each idea stores: title, description, category, target age range, source URL, or
 
 1. **Brief** (`/stories/new`). Pick an idea to pre-fill the title, age range, topic, duration and
    notes, or start from scratch. Fields: title, target age range, topic, learning objective, main
-   characters (optional: Claude invents them), duration, tone, visual style, language and extra
+   characters (optional: GPT invents them), duration, tone, visual style, language and extra
    notes. Validated with Zod on the server and with native checks in the browser.
-2. **Generate** (`/stories/[id]`). Claude returns one structured document: title and premise;
+2. **Generate** (`/stories/[id]`). GPT returns one structured document: title and premise;
    beginning, middle and ending; full narration; characters with fixed visual descriptions; a
    scene-by-scene storyboard (setting, action, narration, dialogue, characters, visual prompt,
    sound effects, music mood, seconds); overall music mood; estimated duration; and a review
    checklist for age-appropriateness and originality. Generation usually takes 1–3 minutes, and
    the page shows a progress card with the elapsed time.
 3. **Review and edit.** Every field is editable. *Save revision* stores your edits as a new
-   revision. *Revise with notes* sends the current draft and your notes to Claude. *Write a new
+   revision. *Revise with notes* sends the current draft and your notes to GPT. *Write a new
    version* asks for a different take. Nothing is overwritten: every change is a revision, and
    any revision can be restored.
 4. **Approve.** Approval is manual and requires ticking that you've read the story. It marks the
@@ -91,19 +92,18 @@ Each idea stores: title, description, category, target age range, source URL, or
    *Scripted*. Editing or regenerating afterwards sends the story back to review. Approval does
    not publish anything.
 
-Claude's checklist is a self-review and is only advisory. Originality and safety remain your call.
+The model's checklist is a self-review and is only advisory. Originality and safety remain your call.
 
-### How the Claude call works
+### How the story call works
 
-- Model `claude-opus-5-5` by default, effort `medium` (override with `ANTHROPIC_MODEL` and
-  `ANTHROPIC_EFFORT`).
-- Streaming request (`client.beta.messages.stream`) with structured output built from the Zod
-  schema in `src/lib/stories.ts`, so the response is validated before it is saved.
-- Server-side refusal fallback (`fallbacks: "default"`) is on. If the model declines for policy
-  reasons, the API retries on its default fallback model. A final refusal or a truncated output
-  is shown as a clear error.
-- The SDK retries rate limits, 5xx and overload errors twice. Remaining failures are mapped to
-  specific messages (bad key, unknown model, rate limit, network, outage).
+- Model `gpt-6.1-sol` by default, reasoning effort `medium` (override with `OPENAI_MODEL` and
+  `OPENAI_EFFORT`).
+- Streaming request to `POST /v1/responses` with strict structured output (`json_schema`) built
+  from the Zod schema in `src/lib/stories.ts`; the result is validated again before it is saved.
+  `store: false`, so OpenAI doesn't keep the story.
+- A refusal or a truncated output is shown as a clear error, with the tokens that were billed.
+- Rate limits, 5xx and network errors are retried twice. Remaining failures are mapped to specific
+  messages (bad key, unknown model, out of credit, rate limit, network, outage).
 
 ### Usage and cost
 
@@ -121,7 +121,7 @@ actual bill is in the Anthropic Console.
 | --- | --- |
 | `stories` | Brief, status, current content (JSON), optional link to an idea |
 | `story_revisions` | Every version (generated, regenerated, edited or restored) with revision notes |
-| `story_generations` | Every Claude call: model, tokens, duration, error |
+| `story_generations` | Every story-writing call: model, tokens, duration, error |
 
 Deleting a story removes its revisions and usage log. Deleting an idea keeps its stories.
 

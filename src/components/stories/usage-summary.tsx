@@ -29,7 +29,7 @@ export function UsageStats({ usage }: { usage: UsageSummary }) {
       </dl>
       <p className="text-[11px] text-muted-foreground">
         Token counts are reported by the Anthropic API. Costs are estimates at list prices (
-        {PRICING_AS_OF}); see the Anthropic Console for actual billing.
+        {PRICING_AS_OF}); see the OpenAI dashboard for actual billing.
         {usage.unpricedCalls > 0 &&
           ` ${usage.unpricedCalls} call(s) used a model without a known price and are excluded.`}
       </p>

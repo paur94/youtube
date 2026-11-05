@@ -14,12 +14,7 @@ import {
   type StoryContent,
   type StoryFormState,
 } from "@/lib/stories";
-import {
-  getClaudeClient,
-  getClaudeConfig,
-  NOT_CONFIGURED_MESSAGE,
-  runStoryGeneration,
-} from "@/server/ai/claude";
+import { getOpenAIConfig, OPENAI_NOT_CONFIGURED_MESSAGE, runOpenAIStoryGeneration } from "@/server/ai/openai";
 import { buildStoryPrompt } from "@/server/ai/story-prompt";
 import { getStory } from "@/server/queries/stories";
 
@@ -146,8 +141,8 @@ export async function generateStory(id: string, notes = ""): Promise<ActionResul
   if (!storyId.success) return { ok: false, message: "Invalid story id" };
   if (!revisionNotes.success) return { ok: false, message: revisionNotes.error.issues[0].message };
 
-  const client = getClaudeClient();
-  if (!client) return { ok: false, message: NOT_CONFIGURED_MESSAGE };
+  const apiKey = process.env.OPENAI_API_KEY?.trim();
+  if (!apiKey) return { ok: false, message: OPENAI_NOT_CONFIGURED_MESSAGE };
 
   let story: Awaited<ReturnType<typeof getStory>>;
   try {
@@ -158,9 +153,9 @@ export async function generateStory(id: string, notes = ""): Promise<ActionResul
   }
   if (!story) return { ok: false, message: "Story not found" };
 
-  const { model, effort } = getClaudeConfig();
+  const { model, effort } = getOpenAIConfig();
   const prompt = buildStoryPrompt(story, { previous: story.content, notes: revisionNotes.data });
-  const result = await runStoryGeneration(client, { model, effort, ...prompt });
+  const result = await runOpenAIStoryGeneration({ apiKey }, { model, effort, ...prompt });
 
   let revisionNumber: number | null;
   try {

@@ -323,7 +323,7 @@ function CharactersField({
     <Field
       id={id}
       label="Main characters"
-      hint="One per line · leave empty to let Claude invent them"
+      hint="One per line · leave empty to let GPT invent them"
       error={error}
     >
       <Textarea

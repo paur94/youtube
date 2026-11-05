@@ -392,7 +392,7 @@ function ReviewChecklist({ checklist }: { checklist: StoryContent["reviewCheckli
       <CardHeader>
         <CardTitle>Age-appropriateness and originality review</CardTitle>
         <CardDescription>
-          Claude&apos;s self-review of this draft. It is advisory only: read the full story yourself
+          The model&apos;s self-review of this draft. It is advisory only: read the full story yourself
           before approving.{" "}
           {concerns > 0 && (
             <span className="font-medium text-amber-300">
@@ -421,7 +421,7 @@ function ReviewChecklist({ checklist }: { checklist: StoryContent["reviewCheckli
                 )}
                 <div className="min-w-0">
                   <p className="font-medium">{REVIEW_CHECK_LABELS[check]}</p>
-                  <p className="text-xs text-muted-foreground">{item ? item.note : "Not reported by Claude — check manually."}</p>
+                  <p className="text-xs text-muted-foreground">{item ? item.note : "Not reported by the model — check manually."}</p>
                 </div>
               </li>
             );

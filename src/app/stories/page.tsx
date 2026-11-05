@@ -21,7 +21,7 @@ import {
 import { AGE_GROUP_LABELS } from "@/lib/ideas";
 import { MODULES } from "@/lib/navigation";
 import { formatDuration } from "@/lib/stories";
-import { getClaudeConfig } from "@/server/ai/claude";
+import { getOpenAIConfig } from "@/server/ai/openai";
 import { getWorkspaceUsage, listStories } from "@/server/queries/stories";
 
 export const metadata: Metadata = { title: MODULES.stories.label };
@@ -69,7 +69,7 @@ function StoriesSkeleton() {
 async function StoriesData() {
   await connection();
   const [stories, usage] = await Promise.all([listStories(), getWorkspaceUsage()]);
-  const claude = getClaudeConfig();
+  const writer = getOpenAIConfig();
 
   return (
     <div className="grid gap-6 lg:grid-cols-3">
@@ -139,21 +139,21 @@ async function StoriesData() {
       <div className="grid content-start gap-6">
         <Card>
           <CardHeader>
-            <CardTitle>Claude API</CardTitle>
+            <CardTitle>OpenAI API (story writing)</CardTitle>
             <CardDescription>
-              {claude.configured
-                ? `Connected · ${claude.model} · effort ${claude.effort}`
+              {writer.configured
+                ? `Connected · ${writer.model} · effort ${writer.effort}`
                 : "Not configured"}
             </CardDescription>
           </CardHeader>
           <CardContent>
-            {claude.configured ? (
+            {writer.configured ? (
               <UsageStats usage={usage} />
             ) : (
               <div className="flex items-start gap-2 text-sm text-muted-foreground">
                 <KeyRoundIcon className="mt-0.5 size-4 shrink-0 text-amber-400" />
                 <p>
-                  Add <code className="rounded bg-muted px-1">ANTHROPIC_API_KEY</code> to{" "}
+                  Add <code className="rounded bg-muted px-1">OPENAI_API_KEY</code> to{" "}
                   <code className="rounded bg-muted px-1">.env.local</code> and restart the dev
                   server to enable generation. You can still create and edit briefs.
                 </p>

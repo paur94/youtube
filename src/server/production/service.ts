@@ -36,6 +36,7 @@ import {
   generatesAudio,
   getHiggsfieldModel,
   type HiggsfieldModel,
+  modelDuration,
   outputDuration,
 } from "@/lib/higgsfield";
 import { estimateReplicateCost, REPLICATE_PROVIDER, replicateToRemoteStatus } from "@/lib/replicate";
@@ -45,10 +46,11 @@ import {
   type AssetKind,
   type AssetSource,
   buildGenerationPrompt,
+  buildVideoPrompt,
   deriveSceneStatus,
-  describeDialogue,
   DIALOGUE_NEGATIVE_PROMPT,
   describeReferenceImages,
+  VIDEO_NEGATIVE_PROMPT,
   findPromptConcerns,
   isReadyForAssembly,
   JOB_TIMEOUT_MS,
@@ -347,15 +349,22 @@ export async function submitApiGeneration(options: SubmitOptions): Promise<Servi
   if (!scene.visualPrompt.trim()) return { ok: false, message: "Add a visual prompt to the scene first" };
 
   let negativePrompt = scene.negativePrompt;
-  if (generatesAudio(model)) {
-    const dialogue = describeDialogue(
-      scene.dialogue,
-      loaded.characters.map((c) => c.name),
-    );
-    if (dialogue) {
-      prompt = `${prompt}\n\n${dialogue}`;
-      negativePrompt = [negativePrompt.trim(), DIALOGUE_NEGATIVE_PROMPT].filter(Boolean).join(", ");
-    }
+  if (model.output === "video") {
+    // The visual prompt describes the keyframe; a clip is driven by the action and dialogue (no voice-over).
+    const voiced = generatesAudio(model);
+    prompt = buildVideoPrompt({
+      visualPrompt: scene.visualPrompt,
+      action: scene.action,
+      dialogue: scene.dialogue,
+      characters: loaded.characters,
+      visualStyle: plan.visualStyle,
+      durationSeconds: modelDuration(model, scene.durationSeconds) ?? scene.durationSeconds,
+      startImage: model.input === "image",
+      voiced,
+    });
+    negativePrompt = [negativePrompt.trim(), VIDEO_NEGATIVE_PROMPT, voiced ? DIALOGUE_NEGATIVE_PROMPT : ""]
+      .filter(Boolean)
+      .join(", ");
   }
 
   const concerns = findPromptConcerns(prompt);

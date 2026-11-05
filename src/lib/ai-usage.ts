@@ -1,5 +1,5 @@
-// Token usage and cost *estimates*. Actual billing is in the Anthropic Console; these numbers use
-// published first-party list prices and can drift when prices change.
+// Token usage and cost *estimates*. Actual billing is in the Anthropic Console (Claude) and the OpenAI
+// dashboard (stories); these numbers use published list prices and can drift when prices change.
 
 export type TokenUsage = {
   inputTokens: number;
@@ -16,7 +16,7 @@ type Pricing = {
   cacheRead?: number;
 };
 
-export const PRICING_AS_OF = "October 2026";
+export const PRICING_AS_OF = "November 2026";
 
 // Anthropic first-party API list prices (USD / 1M tokens).
 const PRICING: Record<string, Pricing> = {
@@ -25,6 +25,8 @@ const PRICING: Record<string, Pricing> = {
   "claude-sonnet-5-5": { input: 2, output: 10, cacheRead: 0.2 },
   "claude-sonnet-5": { input: 2, output: 10 },
   "claude-fable-5-1": { input: 10, output: 50, cacheRead: 0.25 },
+  // OpenAI standard list prices (story generation), November 2026.
+  "gpt-6.1-sol": { input: 2, output: 10, cacheRead: 0.1 },
 };
 
 // 5-minute cache writes are billed at 1.25x the input price.

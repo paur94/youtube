@@ -206,40 +206,280 @@ export function buildGenerationPrompt(input: {
 
 /** Appended to the negative prompt when a video model voices the dialogue itself. */
 export const DIALOGUE_NEGATIVE_PROMPT =
-  "listener lip movement, silent character talking, two characters talking at once, wrong character speaking";
+  "listener lip movement, silent character talking, two characters talking at once, wrong character speaking, slow drawn-out speech";
+
+/**
+ * Appended to the negative prompt of every video request. Over a long clip Wan drifts outfits back to
+ * whatever the prompt describes elsewhere and adds people; Alibaba's Wan 3.0 prompt guide recommends
+ * excluding costume changes explicitly.
+ */
+export const VIDEO_NEGATIVE_PROMPT =
+  "costume change, outfit change, clothes changing colour, hairstyle change, character turning into someone else, extra people, subtitles, captions, jump cuts, narrator, voice-over";
 
 const NARRATOR = "Narrator";
 
-/**
- * Spoken lines for video models that generate their own sound, quoted so the model voices them
- * word for word and lip-syncs the speaker. Each line names who stays silent, because models tend
- * to move the listener's mouth too, especially on a question that the listener answers next.
- * `onScreen` adds characters who are in the shot but have no lines.
- */
-export function describeDialogue(lines: StoryScene["dialogue"], onScreen: string[] = []) {
-  const spoken = lines
-    .filter((d) => d.line.trim())
-    .map((d) => ({ speaker: d.character.trim() || NARRATOR, line: d.line.trim() }));
-  if (!spoken.length) return "";
-  const present = [
-    ...new Set([...onScreen.map((n) => n.trim()), ...spoken.map((d) => d.speaker)].filter(Boolean)),
-  ].filter((n) => n.toLowerCase() !== NARRATOR.toLowerCase());
+/** A timed beat of a scene's action: "3-7s: Levon lies back". */
+export type ActionSegment = { start: number; end: number; text: string };
 
-  const turns = spoken.map(({ speaker, line }) => {
-    if (speaker.toLowerCase() === NARRATOR.toLowerCase()) {
-      return `a voice-over narrator says, "${line}", and no one on screen moves their lips`;
+export type Timeline = {
+  /** Lines before the first timed beat (camera, shot type). */
+  preamble: string[];
+  segments: ActionSegment[];
+  /** Lines after the last timed beat (rules that apply to the whole clip). */
+  notes: string[];
+};
+
+// A time stamp is seconds ("3", "3.5") or minutes:seconds ("0:03").
+const STAMP = String.raw`(\d{1,3}(?::\d{2})?(?:\.\d+)?)`;
+// "0-3s: text", "3 – 7 s: text", "[10-13s] text", "(0:00-0:03): text", "Shot 2 (3-7s): text".
+const SEGMENT_RE = new RegExp(
+  String.raw`^\s*(?:shot\s*\d+\s*[:：]?\s*)?([[(])?\s*${STAMP}\s*s?\s*(?:-|–|—|to)\s*${STAMP}\s*s?\s*([\])])?\s*([:：])?\s*(.*)$`,
+  "i",
+);
+
+function stampSeconds(stamp: string) {
+  const [first, second] = stamp.split(":");
+  return second === undefined ? Number(first) : Number(first) * 60 + Number(second);
+}
+
+/**
+ * Splits an action text into timed beats when it is written as a shot list ("0-3s: ...", one beat
+ * per line); otherwise the segments are empty. Untimed lines before the beats are the preamble
+ * (camera, framing) and lines after them are notes for the whole clip.
+ */
+export function parseTimeline(action: string): Timeline {
+  const timeline: Timeline = { preamble: [], segments: [], notes: [] };
+  for (const raw of action.split(/\r?\n/)) {
+    const line = raw.trim();
+    if (!line) continue;
+    const m = SEGMENT_RE.exec(line);
+    // A bare "2-3 children" is a count, not a beat: a beat is bracketed or followed by a colon.
+    if (m && (m[1] || m[4] || m[5]) && m[6].trim()) {
+      const start = stampSeconds(m[2]);
+      const end = stampSeconds(m[3]);
+      if (Number.isFinite(start) && Number.isFinite(end) && end > start) {
+        timeline.segments.push({ start, end, text: m[6].trim() });
+        continue;
+      }
     }
+    (timeline.segments.length ? timeline.notes : timeline.preamble).push(line);
+  }
+  return timeline;
+}
+
+function words(text: string) {
+  return text
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, " ")
+    .split(" ")
+    .filter(Boolean);
+}
+
+/** True when every word of `needle` appears in `haystack` in order (punctuation and case ignored). */
+function containsInOrder(haystack: string[], needle: string[]) {
+  let i = 0;
+  for (const word of haystack) if (word === needle[i]) i++;
+  return i === needle.length;
+}
+
+/** True when `needle` appears in `haystack` as a contiguous run of words. */
+function containsPhrase(haystack: string[], needle: string[]) {
+  outer: for (let start = 0; start + needle.length <= haystack.length; start++) {
+    for (let j = 0; j < needle.length; j++) if (haystack[start + j] !== needle[j]) continue outer;
+    return true;
+  }
+  return false;
+}
+
+// Spans in straight or curly double quotes, or in single quotes that aren't apostrophes ("Yana's").
+const QUOTED_RE = /["“”]([^"“”]+)["“”]|(?<![\p{L}\p{N}])['‘]([^'’‘]+)['’](?![\p{L}\p{N}])/gu;
+
+function quotedSpans(text: string) {
+  return [...text.matchAll(QUOTED_RE)].map((m) => words(m[1] ?? m[2] ?? ""));
+}
+
+/**
+ * Finds the beat each spoken line belongs to, in order: a line is placed in the first beat (from the
+ * previous line's beat onwards) that quotes it, so the clip's speech follows the choreography.
+ * Exact quotes win over looser matches anywhere later, so a one-word line like "Up!" isn't caught
+ * by an earlier beat that merely says "legs up". Lines the action doesn't quote get null and keep
+ * their position in the list.
+ */
+export function placeLines(segments: ActionSegment[], lines: string[]) {
+  const texts = segments.map((s) => words(s.text));
+  const quotes = segments.map((s) => quotedSpans(s.text));
+  const tiers: ((i: number, needle: string[]) => boolean)[] = [
+    (i, needle) => quotes[i].some((q) => q.length === needle.length && containsPhrase(q, needle)),
+    (i, needle) => containsPhrase(quotes[i].flat(), needle),
+    (i, needle) => containsPhrase(texts[i], needle),
+    (i, needle) => containsInOrder(texts[i], needle),
+  ];
+  let from = 0;
+  return lines.map((line) => {
+    const needle = words(line);
+    if (!needle.length) return null;
+    for (const matches of tiers) {
+      for (let i = from; i < segments.length; i++) {
+        if (matches(i, needle)) {
+          from = i;
+          return segments[i];
+        }
+      }
+    }
+    return null;
+  });
+}
+
+function sentences(text: string) {
+  return text
+    .split(/(?<=[.!?…])\s+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+type Turn = { speaker: string; line: string; at: number | null };
+
+/** Rough length of a line spoken at a lively children's-TV pace. */
+function speechSeconds(text: string) {
+  return words(text).length / 2.5;
+}
+
+// A narrator cue in an action text: `Narrator: "..."`, `Voice-over says "..."`.
+const NARRATOR_CUE_RE = /\s*\b(?:narrator|voice[- ]?over)\b(?:\s+says)?\s*[:：]?\s*(?:["“][^"”]*["”]|['‘][^'’]*['’])[.!]?/gi;
+
+/** Removes narrator lines from action text: clips carry only the characters' own speech. */
+export function stripNarration(text: string) {
+  return text.replace(NARRATOR_CUE_RE, "").replace(/[ \t]{2,}/g, " ").trim();
+}
+
+/**
+ * The characters' spoken lines for video models that generate their own sound, in the syntax
+ * Alibaba's Wan 3.0 prompt guide documents (`Name says: "line"`, "Lip sync"). There is no voice-over:
+ * lines without a speaker are left out. Each line names who stays silent, because models tend to move
+ * the listener's mouth too. With a timed action (see parseTimeline) every line that the action quotes
+ * is stamped with the second its beat starts, so speech and movement line up and the lines aren't
+ * spread evenly over the clip. `onScreen` adds characters who are in the shot but have no lines.
+ */
+export function describeDialogue(
+  lines: StoryScene["dialogue"],
+  onScreen: string[] = [],
+  options: { timeline?: ActionSegment[] } = {},
+) {
+  const spoken = lines
+    .map((d) => ({ speaker: d.character.trim(), line: d.line.trim() }))
+    .filter((d) => d.line && d.speaker && d.speaker.toLowerCase() !== NARRATOR.toLowerCase());
+  if (!spoken.length) return "";
+  const present = [...new Set([...onScreen.map((n) => n.trim()), ...spoken.map((d) => d.speaker)].filter(Boolean))];
+
+  const segments = options.timeline ?? [];
+  const placed = placeLines(
+    segments,
+    spoken.map((s) => s.line),
+  );
+  // Stable by start time; lines the action doesn't quote keep their list order at the end.
+  const turns: Turn[] = spoken
+    .map((s, index) => ({ turn: { ...s, at: placed[index]?.start ?? null }, index }))
+    .sort((a, b) => (a.turn.at ?? Infinity) - (b.turn.at ?? Infinity) || a.index - b.index)
+    .map((t) => t.turn);
+
+  const rendered = turns.map(({ speaker, line, at }) => {
+    const stamp = at === null ? "" : `(${at}s) `;
     const listeners = present.filter((n) => n !== speaker);
     const silent = listeners.length
-      ? `, while ${joinNames(listeners)} ${listeners.length > 1 ? "listen" : "listens"} silently with mouth closed`
+      ? listeners.length > 1
+        ? ` ${joinNames(listeners)} keep their mouths closed.`
+        : ` ${listeners[0]}'s mouth stays closed.`
       : "";
-    return `${speaker} says, "${line}"${silent}`;
+    return `${stamp}${speaker} says: "${line}" Lip sync.${silent}`;
   });
-  return (
-    "Audio: the characters speak these lines aloud, in this order, with matching lip movement on the speaker only: " +
-    turns.join(". Then ") +
-    ". Only one character speaks at a time; a character's lips move only during their own line."
-  );
+
+  const total = Math.round(turns.reduce((sum, t) => sum + speechSeconds(t.line), 0));
+  const header =
+    "Dialogue, spoken word for word" +
+    (segments.length ? " at the second given, in step with the action above" : ", in this order") +
+    `. Natural, lively children's-TV pace, about ${Math.max(total, 1)} seconds of speech in total: each line takes only as long as its words need and is never slowed or stretched; between lines nobody speaks. ` +
+    "Only one character speaks at a time and only the speaker's lips move:";
+  return `${header}\n${rendered.join("\n")}\nNo other dialogue. No narrator or voice-over. No background music.`;
+}
+
+export type VideoPromptInput = {
+  visualPrompt: string;
+  action: string;
+  dialogue: StoryScene["dialogue"];
+  characters: PromptCharacter[];
+  visualStyle?: string | null;
+  /** Clip length that will be requested. */
+  durationSeconds: number;
+  /** The clip animates a start image, which already fixes the look, outfits, setting and framing. */
+  startImage: boolean;
+  /** The model generates its own sound, so the prompt carries the dialogue. */
+  voiced: boolean;
+};
+
+/** The identifying first sentence of a character's bible entry, unless it already names clothes. */
+function identity(character: PromptCharacter) {
+  const first = sentences(character.visualDescription)[0] ?? "";
+  return first && !/\b(wear|wears|wearing|dressed|outfit|clothes)\b/i.test(first) ? first.replace(/[.!?]$/, "") : "";
+}
+
+/**
+ * The prompt for a video model, following Alibaba's Wan 3.0 prompt guide: an overall line, the
+ * scene's action as timed shots, then the dialogue. Clips never get a voice-over: the scene's
+ * narration isn't sent and narrator cues are removed from the action. The scene's visual prompt
+ * describes the keyframe (a still pose), so with a start image it is left out and the image is declared the lock for
+ * characters, outfits and setting; the character bible is left out too, because its canonical outfit
+ * contradicts a scene that dresses a character differently and the model follows the text over the
+ * image. Text-to-video has no image to lock to, so it keeps the visual prompt and the bible.
+ */
+export function buildVideoPrompt(input: VideoPromptInput) {
+  const style = input.visualStyle?.trim();
+  const names = input.characters.map((c) => c.name.trim()).filter(Boolean);
+  const action = stripNarration(input.action);
+  const timeline = parseTimeline(action);
+  const parts: string[] = [];
+
+  if (input.startImage) {
+    parts.push(
+      `${style ? `${style}. ` : ""}A ${input.durationSeconds}-second clip that continues from the first-frame image: ` +
+        "keep the characters, their clothes, the room, the camera angle and the art style exactly as in that image from the first second to the last.",
+    );
+    if (names.length) {
+      const who = input.characters
+        .map((c) => {
+          const id = identity(c);
+          return id ? `${c.name.trim()} (${id.charAt(0).toLowerCase()}${id.slice(1)})` : c.name.trim();
+        })
+        .join("; ");
+      parts.push(
+        `Characters, exactly as in the first frame: ${who}. Same face, hair, proportions and outfit throughout; ` +
+          `no costume changes. Only ${names.length > 1 ? "these characters" : "this character"} appear; no one else enters.`,
+      );
+    }
+  } else {
+    parts.push(buildGenerationPrompt({ visualPrompt: input.visualPrompt, characters: input.characters, visualStyle: style }));
+    parts.push(`A ${input.durationSeconds}-second clip. Outfits, faces and setting stay exactly the same from start to end.`);
+  }
+
+  if (timeline.segments.length) {
+    parts.push(
+      [
+        ...timeline.preamble,
+        ...timeline.segments.map((s, i) => `Shot ${i + 1} [${s.start}-${s.end}s]: ${s.text}`),
+        ...timeline.notes,
+      ].join("\n"),
+    );
+  } else if (action) {
+    parts.push(`Action: ${action}`);
+  } else if (input.startImage && input.visualPrompt.trim()) {
+    // Older scenes keep the motion in the visual prompt.
+    parts.push(input.visualPrompt.trim());
+  }
+
+  if (input.voiced) {
+    const dialogue = describeDialogue(input.dialogue, names, { timeline: timeline.segments });
+    parts.push(dialogue || "No dialogue, no narrator or voice-over. Quiet ambient sound only; no background music.");
+  }
+  return parts.filter(Boolean).join("\n\n");
 }
 
 function joinNames(names: string[]) {

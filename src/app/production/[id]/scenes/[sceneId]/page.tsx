@@ -21,7 +21,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Skeleton } from "@/components/ui/skeleton";
 import { HIGGSFIELD_MODELS } from "@/lib/higgsfield";
 import { MODULES } from "@/lib/navigation";
-import { buildGenerationPrompt, findPromptConcerns, POLLABLE_JOB_STATUSES } from "@/lib/production";
+import { buildGenerationPrompt, buildVideoPrompt, findPromptConcerns, POLLABLE_JOB_STATUSES } from "@/lib/production";
 import { getClaudeConfig } from "@/server/ai/claude";
 import { getHedraConfig } from "@/server/providers/hedra";
 import { getHiggsfieldConfig } from "@/server/providers/higgsfield";
@@ -93,7 +93,24 @@ async function SceneData({ params }: Pick<Props, "params">) {
   const higgsfield = getHiggsfieldConfig();
   const linked = characterOptions.filter((c) => detail.characterIds.includes(c.id));
   const prompt = buildGenerationPrompt({ visualPrompt: scene.visualPrompt, characters: linked, visualStyle: plan.visualStyle });
-  const concerns = [...findPromptConcerns(prompt), ...qcBlockers];
+  // Clips are prompted from the action and dialogue (no voice-over); the exact text depends on whether the
+  // model animates a start image. Shown in the panel so what is sent can be checked before generating.
+  const videoPromptFor = (startImage: boolean) =>
+    buildVideoPrompt({
+      visualPrompt: scene.visualPrompt,
+      action: scene.action,
+      dialogue: scene.dialogue,
+      characters: linked,
+      visualStyle: plan.visualStyle,
+      durationSeconds: scene.durationSeconds,
+      startImage,
+      voiced: true,
+    });
+  const videoPrompts = { fromImage: videoPromptFor(true), fromText: videoPromptFor(false) };
+  const concerns = [
+    ...new Set([...findPromptConcerns(prompt), ...findPromptConcerns(videoPrompts.fromImage), ...findPromptConcerns(videoPrompts.fromText)]),
+    ...qcBlockers,
+  ];
   const revisions = new Map(detail.assets.map((a) => [a.id, a.revision]));
   const activeApiJobs = detail.jobs.filter((j) => j.mode === "api" && POLLABLE_JOB_STATUSES.includes(j.status)).length;
 
@@ -201,6 +218,7 @@ async function SceneData({ params }: Pick<Props, "params">) {
                 replicateConfigured={getReplicateConfig().configured}
                 hedraConfigured={getHedraConfig().configured}
                 prompt={prompt}
+                videoPrompts={videoPrompts}
                 negativePrompt={scene.negativePrompt}
                 concerns={concerns}
                 startImages={startImages}

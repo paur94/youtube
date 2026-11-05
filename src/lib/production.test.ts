@@ -4,6 +4,7 @@ import { sampleContent } from "@/test/fixtures";
 
 import {
   buildGenerationPrompt,
+  buildVideoPrompt,
   clampDuration,
   describeDialogue,
   describeReferenceImages,
@@ -14,7 +15,9 @@ import {
   moveInOrder,
   parseCharacterForm,
   parseSceneForm,
+  parseTimeline,
   scenesFromStory,
+  stripNarration,
   summarizeCosts,
   summarizeProgress,
 } from "./production";
@@ -108,16 +111,18 @@ describe("buildGenerationPrompt", () => {
 });
 
 describe("describeDialogue", () => {
-  it("quotes each spoken line with its speaker, in order", () => {
+  it("quotes each spoken line with its speaker, in order, in Wan's dialogue syntax", () => {
     const text = describeDialogue([
       { character: "Pip", line: "Puddles!" },
       { character: "Mila", line: " Let's count them! " },
       { character: "Pip", line: "  " },
     ]);
-    expect(text).toContain('Pip says, "Puddles!"');
-    expect(text).toContain('Then Mila says, "Let\'s count them!"');
+    expect(text).toContain('Pip says: "Puddles!" Lip sync.');
+    expect(text).toContain('Mila says: "Let\'s count them!" Lip sync.');
     expect(text.indexOf("Pip says")).toBeLessThan(text.indexOf("Mila says"));
-    expect(text.match(/says/g)).toHaveLength(2);
+    expect(text.match(/says:/g)).toHaveLength(2);
+    expect(text).toContain("never slowed or stretched");
+    expect(text).toContain("No other dialogue.");
   });
 
   it("keeps listeners' mouths closed on each line, including on-screen characters without lines", () => {
@@ -128,23 +133,170 @@ describe("describeDialogue", () => {
       ],
       ["Mila", "Papa", "Zip"],
     );
-    expect(text).toContain('Papa says, "What shape is it?", while Mila and Zip listen silently with mouth closed');
-    expect(text).toContain('Mila says, "A rectangle!", while Papa and Zip listen silently with mouth closed');
+    expect(text).toContain('Papa says: "What shape is it?" Lip sync. Mila and Zip keep their mouths closed.');
+    expect(text).toContain('Mila says: "A rectangle!" Lip sync. Papa and Zip keep their mouths closed.');
     expect(text).toContain("Only one character speaks at a time");
   });
 
-  it("treats unnamed lines as a voice-over with no lip movement", () => {
+  it("never adds a voice-over: unnamed and narrator lines are left out", () => {
     const text = describeDialogue([
       { character: "", line: "Once upon a time." },
+      { character: "Narrator", line: "What fun." },
       { character: "Mila", line: "Hello!" },
     ]);
-    expect(text).toContain('a voice-over narrator says, "Once upon a time.", and no one on screen moves their lips');
-    expect(text).toContain('Mila says, "Hello!"');
-    expect(text).not.toContain("while Narrator");
+    expect(text).not.toContain("Once upon a time");
+    expect(text).not.toContain("What fun");
+    expect(text).not.toMatch(/Voice-over:/);
+    expect(text).toContain('Mila says: "Hello!"');
+    expect(text).toContain("No narrator or voice-over.");
+    expect(describeDialogue([{ character: "", line: "Once upon a time." }])).toBe("");
+  });
+
+  it("stamps each line with the second of the beat that quotes it, so speech follows the action", () => {
+    const action = [
+      "One continuous shot.",
+      "0-3s: Both wave. Narrator: \"Good morning! It's exercise time!\"",
+      "3-7s: Levon says 'Lie on your back' and rolls back. Yana watches.",
+      "7-10s: Yana lies back too. Narrator: \"Yana lies down too.\" Levon's mouth stays closed.",
+      "10-13s: Levon says 'Hold!', then counts 'One, two, three!'; Yana joins in with 'Three!'",
+    ].join("\r\n");
+    const text = describeDialogue(
+      [
+        { character: "Levon", line: "Lie on your back." },
+        { character: "Levon", line: "Hold! One, two, three!" },
+        { character: "Yana", line: "Three!" },
+      ],
+      ["Levon", "Yana"],
+      { timeline: parseTimeline(action).segments },
+    );
+    const lines = text.split("\n");
+    expect(lines[1]).toBe(`(3s) Levon says: "Lie on your back." Lip sync. Yana's mouth stays closed.`);
+    expect(lines[2]).toBe(`(10s) Levon says: "Hold! One, two, three!" Lip sync. Yana's mouth stays closed.`);
+    expect(lines[3]).toBe(`(10s) Yana says: "Three!" Lip sync. Levon's mouth stays closed.`);
+    expect(text).toContain("at the second given, in step with the action above");
+  });
+
+  it("prefers the beat that quotes a line over an earlier one that merely uses its words", () => {
+    const action = [
+      "10-13s: Levon says 'Lift your legs' and lifts both legs straight up toward the ceiling. Yana's legs stay down.",
+      "13-16s: Yana lifts her legs and says 'Up!' with a big smile. Levon's legs stay up.",
+    ].join("\n");
+    const text = describeDialogue(
+      [
+        { character: "Levon", line: "Lift your legs." },
+        { character: "Yana", line: "Up!" },
+      ],
+      ["Levon", "Yana"],
+      { timeline: parseTimeline(action).segments },
+    );
+    expect(text).toContain('(10s) Levon says: "Lift your legs."');
+    expect(text).toContain('(13s) Yana says: "Up!"');
+  });
+
+  it("keeps a line the action doesn't quote, unstamped and in order", () => {
+    const text = describeDialogue([{ character: "Mila", line: "Hello!" }], ["Mila"], {
+      timeline: parseTimeline("0-2s: Mila waves.").segments,
+    });
+    expect(text).toContain('\nMila says: "Hello!" Lip sync.');
+    expect(text).not.toContain("(0s)");
   });
 
   it("is empty when the scene has no dialogue", () => {
     expect(describeDialogue([])).toBe("");
+  });
+});
+
+describe("stripNarration", () => {
+  it("removes narrator and voice-over cues, keeping the characters' lines", () => {
+    expect(stripNarration(`Both wave. Narrator: "Good morning! It's time!" The children do not speak.`)).toBe(
+      "Both wave. The children do not speak.",
+    );
+    expect(stripNarration("Yana lies down. Voice-over says “Yana lies down too.” Levon is still.")).toBe(
+      "Yana lies down. Levon is still.",
+    );
+    expect(stripNarration("Levon says 'Lie on your back' and rolls back.")).toBe("Levon says 'Lie on your back' and rolls back.");
+  });
+});
+
+describe("parseTimeline", () => {
+  it("reads timed beats in the usual spellings and keeps untimed lines around them", () => {
+    const timeline = parseTimeline(
+      "Static camera.\n0-3s: wave\r\n3 – 7 s: lie back\n[7-10s] legs up\nShot 4 (0:10-0:13): hold\nNo text.",
+    );
+    expect(timeline.preamble).toEqual(["Static camera."]);
+    expect(timeline.segments).toEqual([
+      { start: 0, end: 3, text: "wave" },
+      { start: 3, end: 7, text: "lie back" },
+      { start: 7, end: 10, text: "legs up" },
+      { start: 10, end: 13, text: "hold" },
+    ]);
+    expect(timeline.notes).toEqual(["No text."]);
+  });
+
+  it("doesn't mistake a count or a backwards range for a beat", () => {
+    const timeline = parseTimeline("2-3 children wave at the camera.\n5-2s: nonsense");
+    expect(timeline.segments).toEqual([]);
+    expect(timeline.preamble).toHaveLength(2);
+  });
+});
+
+describe("buildVideoPrompt", () => {
+  const characters = [
+    {
+      name: "Levon",
+      visualDescription: "Slim 5-year-old boy with brown eyes. He wears a plain black T-shirt and white sneakers.",
+    },
+    { name: "Yana", visualDescription: "Small 2-year-old toddler girl. She wears a white T-shirt with a pink heart." },
+  ];
+  const scene = {
+    visualPrompt: "Both children sit upright on their mats, waving; nobody is lying down yet. No text.",
+    action: "0-3s: Both wave. Narrator: \"Good morning!\"\n3-7s: Levon says 'Lie on your back' and lies flat on the green mat.",
+    dialogue: [{ character: "Levon", line: "Lie on your back." }],
+    characters,
+    visualStyle: "Soft 3D animation, pastel colours",
+    durationSeconds: 30,
+    voiced: true,
+  };
+
+  it("with a start image locks look and outfits to the image and leaves the keyframe prompt and bible out", () => {
+    const prompt = buildVideoPrompt({ ...scene, startImage: true });
+    expect(prompt).toMatch(/^Soft 3D animation, pastel colours\. A 30-second clip that continues from the first-frame image/);
+    expect(prompt).toContain("Characters, exactly as in the first frame: Levon (slim 5-year-old boy with brown eyes); Yana (small 2-year-old toddler girl).");
+    expect(prompt).toContain("no costume changes");
+    expect(prompt).not.toContain("black T-shirt");
+    expect(prompt).not.toContain("pink heart");
+    expect(prompt).not.toContain("nobody is lying down yet");
+    expect(prompt).toContain("Shot 1 [0-3s]: Both wave.\n");
+    expect(prompt).toContain("Shot 2 [3-7s]: Levon says 'Lie on your back' and lies flat on the green mat.");
+    expect(prompt).not.toContain("Good morning");
+    expect(prompt).not.toMatch(/Narrator:|Voice-over:/);
+    expect(prompt).toContain(`(3s) Levon says: "Lie on your back." Lip sync. Yana's mouth stays closed.`);
+    expect(prompt).toContain("No narrator or voice-over.");
+    expect(prompt.indexOf("Shot 1")).toBeLessThan(prompt.indexOf("Dialogue, spoken word for word"));
+  });
+
+  it("from text keeps the visual prompt and the character bible, since there is no image to lock to", () => {
+    const prompt = buildVideoPrompt({ ...scene, startImage: false });
+    expect(prompt).toContain("Both children sit upright on their mats");
+    expect(prompt).toContain("Keep these characters exactly consistent: Levon: Slim 5-year-old boy");
+    expect(prompt).toContain("Visual style: Soft 3D animation, pastel colours.");
+    expect(prompt).toContain("Shot 1 [0-3s]: Both wave.");
+    expect(prompt).toContain("Outfits, faces and setting stay exactly the same from start to end.");
+  });
+
+  it("uses prose action as is, and the visual prompt only when a scene has no action", () => {
+    const prose = buildVideoPrompt({ ...scene, startImage: true, action: "Levon lies down, then Yana copies him." });
+    expect(prose).toContain("Action: Levon lies down, then Yana copies him.");
+    expect(prose).toContain('\nLevon says: "Lie on your back." Lip sync.');
+    const legacy = buildVideoPrompt({ ...scene, startImage: true, action: "" });
+    expect(legacy).toContain("Both children sit upright on their mats");
+  });
+
+  it("asks a silent model for no dialogue text and a voiced model with nothing to say for silence", () => {
+    const silent = buildVideoPrompt({ ...scene, startImage: true, voiced: false });
+    expect(silent).not.toContain("Dialogue");
+    const quiet = buildVideoPrompt({ ...scene, startImage: true, dialogue: [] });
+    expect(quiet).toContain("No dialogue, no narrator or voice-over. Quiet ambient sound only; no background music.");
   });
 });
 

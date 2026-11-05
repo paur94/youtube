@@ -41,6 +41,7 @@ export function GenerationPanel({
   replicateConfigured,
   hedraConfigured,
   prompt,
+  videoPrompts,
   negativePrompt,
   concerns,
   startImages,
@@ -55,8 +56,10 @@ export function GenerationPanel({
   /** Replicate serves the Wan 3.0 models marked provider "replicate". */
   replicateConfigured: boolean;
   hedraConfigured: boolean;
-  /** Full prompt including character descriptions and style. */
+  /** Keyframe prompt: the visual prompt with the character descriptions and style. */
   prompt: string;
+  /** Clip prompts built from the action and dialogue, with and without a start image. */
+  videoPrompts: { fromImage: string; fromText: string };
   negativePrompt: string;
   concerns: string[];
   startImages: StartImage[];
@@ -82,6 +85,7 @@ export function GenerationPanel({
   const model = getHiggsfieldModel(modelId);
   const providerName = model?.provider === "replicate" ? "Replicate" : "Higgsfield";
   const needsStart = model?.input === "image";
+  const activePrompt = kind === "video" ? (needsStart ? videoPrompts.fromImage : videoPrompts.fromText) : prompt;
   const blocked = concerns.length > 0 || !prompt.trim();
 
   function switchKind(next: AssetKind) {
@@ -195,6 +199,21 @@ export function GenerationPanel({
                 {!model.supportsNegativePrompt && " The negative prompt isn't supported by this model."}
               </p>
             )}
+            <details className="text-xs text-muted-foreground">
+              <summary className="cursor-pointer">
+                Prompt that will be sent for the {kind === "video" ? "clip" : "keyframe"}
+                {kind === "video" && (needsStart ? " (from the start image)" : " (from text)")}
+              </summary>
+              <pre className="mt-2 max-h-64 overflow-auto rounded-md border bg-background/60 p-3 whitespace-pre-wrap">
+                {activePrompt || "No prompt yet"}
+              </pre>
+              {kind === "video" && (
+                <p className="mt-1">
+                  Built from the scene&apos;s action (write it as timed beats, e.g. “3-7s: …”, to pin each line and
+                  move to a second) and dialogue. Narration and narrator cues are never sent: clips have no voice-over. The visual prompt describes the keyframe only.
+                </p>
+              )}
+            </details>
             {blocked && (
               <p className="flex items-start gap-2 text-xs text-rose-300">
                 <TriangleAlertIcon className="mt-0.5 size-3.5 shrink-0" />
@@ -244,11 +263,14 @@ export function GenerationPanel({
           <li>Download the result and import it here. It&apos;s marked “Needs review”.</li>
         </ol>
         <div className="grid gap-2">
+          <p className="text-xs text-muted-foreground">
+            Showing the {kind === "video" ? "clip" : "keyframe"} prompt (switch the tab above for the other).
+          </p>
           <pre className="max-h-48 overflow-auto rounded-md border bg-background/60 p-3 text-xs whitespace-pre-wrap">
-            {prompt || "No prompt yet"}
+            {activePrompt || "No prompt yet"}
           </pre>
           <div className="flex flex-wrap gap-2">
-            <CopyButton text={prompt} label="Copy prompt" />
+            <CopyButton text={activePrompt} label="Copy prompt" />
             <CopyButton text={negativePrompt} label="Copy negative prompt" />
             <Button asChild variant="outline" size="sm">
               <a href={HIGGSFIELD_WEB_URL} target="_blank" rel="noreferrer">

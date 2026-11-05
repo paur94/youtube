@@ -25,13 +25,14 @@ type Props = {
   content: StoryContent | null;
   latestRevision: number | null;
   targetDurationSeconds: number;
-  claude: { configured: boolean; model: string };
+  /** The model that writes stories (OpenAI). */
+  writer: { configured: boolean; model: string };
 };
 
 const NETWORK_ERROR =
   "Lost contact with the server. If a revision appears in the history, the request still finished.";
 
-export function StoryWorkspace({ storyId, content, latestRevision, targetDurationSeconds, claude }: Props) {
+export function StoryWorkspace({ storyId, content, latestRevision, targetDurationSeconds, writer }: Props) {
   const [draft, setDraft] = useState(content);
   const [version, setVersion] = useState(0);
   // Reset the editor whenever the server has a new revision; adjusting state during render
@@ -100,8 +101,8 @@ export function StoryWorkspace({ storyId, content, latestRevision, targetDuratio
 
   return (
     <div className="grid min-w-0 gap-6">
-      {!claude.configured && <NotConfiguredCard />}
-      {generating && <GeneratingCard model={claude.model} revising={!!content} />}
+      {!writer.configured && <NotConfiguredCard />}
+      {generating && <GeneratingCard model={writer.model} revising={!!content} />}
       {error && !generating && (
         <Card className="border-destructive/50">
           <CardContent className="flex flex-wrap items-start gap-3">
@@ -126,11 +127,11 @@ export function StoryWorkspace({ storyId, content, latestRevision, targetDuratio
               </div>
               <p className="font-medium">No story yet</p>
               <p className="max-w-md text-sm text-muted-foreground">
-                Claude will write the premise, story arc, narration, a scene-by-scene storyboard with
+                GPT will write the premise, story arc, narration, a scene-by-scene storyboard with
                 visual prompts, sound and music cues, and a review checklist from this brief. It
                 usually takes one to three minutes.
               </p>
-              <Button onClick={() => generate(false)} disabled={!claude.configured || busy}>
+              <Button onClick={() => generate(false)} disabled={!writer.configured || busy}>
                 <WandSparklesIcon />
                 Generate story
               </Button>
@@ -141,7 +142,7 @@ export function StoryWorkspace({ storyId, content, latestRevision, targetDuratio
         <>
           <Card>
             <CardHeader>
-              <CardTitle>Revise with Claude</CardTitle>
+              <CardTitle>Revise with GPT</CardTitle>
               <CardDescription>
                 Describe what to change, or write a completely new version. Each result is saved as a
                 new revision; nothing is overwritten.
@@ -160,12 +161,12 @@ export function StoryWorkspace({ storyId, content, latestRevision, targetDuratio
               <div className="flex flex-wrap items-center gap-2">
                 <Button
                   onClick={() => generate(true)}
-                  disabled={!claude.configured || busy || dirty || !notes.trim()}
+                  disabled={!writer.configured || busy || dirty || !notes.trim()}
                 >
                   <WandSparklesIcon />
                   Revise with notes
                 </Button>
-                <Button variant="outline" onClick={() => generate(false)} disabled={!claude.configured || busy || dirty}>
+                <Button variant="outline" onClick={() => generate(false)} disabled={!writer.configured || busy || dirty}>
                   <RefreshCwIcon />
                   Write a new version
                 </Button>
@@ -220,7 +221,7 @@ function GeneratingCard({ model, revising }: { model: string; revising: boolean 
       <CardContent className="flex items-center gap-4">
         <Loader2Icon className="size-6 shrink-0 animate-spin text-primary" />
         <div className="min-w-0">
-          <p className="font-medium">{revising ? "Claude is writing a new revision…" : "Claude is writing your story…"}</p>
+          <p className="font-medium">{revising ? "GPT is writing a new revision…" : "GPT is writing your story…"}</p>
           <p className="text-sm text-muted-foreground">
             {model} · {seconds}s elapsed. This usually takes one to three minutes. Keep this tab
             open.
@@ -237,10 +238,10 @@ function NotConfiguredCard() {
       <CardContent className="flex items-start gap-3">
         <KeyRoundIcon className="mt-0.5 size-5 shrink-0 text-amber-400" />
         <div className="grid gap-1 text-sm">
-          <p className="font-medium">Claude API key not configured</p>
+          <p className="font-medium">OpenAI API key not configured</p>
           <p className="text-muted-foreground">
             You can write and save the brief, but generating needs an API key. Add{" "}
-            <code className="rounded bg-muted px-1">ANTHROPIC_API_KEY=…</code> to{" "}
+            <code className="rounded bg-muted px-1">OPENAI_API_KEY=…</code> to{" "}
             <code className="rounded bg-muted px-1">.env.local</code> and restart{" "}
             <code className="rounded bg-muted px-1">npm run dev</code>. See the README for details.
           </p>

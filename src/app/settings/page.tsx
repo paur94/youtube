@@ -15,6 +15,7 @@ import { authorizationExpiresSoon, parseTikTokConnectOutcome, TIKTOK_CONNECT_OUT
 import { cn } from "@/lib/utils";
 import { parseConnectOutcome, YOUTUBE_CONNECT_OUTCOMES } from "@/lib/youtube";
 import { getClaudeConfig } from "@/server/ai/claude";
+import { getOpenAIConfig } from "@/server/ai/openai";
 import { getFfmpegVersion } from "@/server/media/ffmpeg";
 import { getMediaRoot } from "@/server/media/storage";
 import { getHedraConfig } from "@/server/providers/hedra";
@@ -134,11 +135,18 @@ async function ClaudeStatus() {
   // Read at request time so changing .env.local only needs a server restart, not a rebuild.
   await connection();
   const claude = getClaudeConfig();
+  const openai = getOpenAIConfig();
   return (
-    <Row
-      label="Claude API"
-      value={claude.configured ? `Configured · ${claude.model}` : "Not configured (set ANTHROPIC_API_KEY)"}
-    />
+    <>
+      <Row
+        label="OpenAI API (story writing)"
+        value={openai.configured ? `Configured · ${openai.model}` : "Not configured (set OPENAI_API_KEY)"}
+      />
+      <Row
+        label="Claude API (QC, Shorts, video copy)"
+        value={claude.configured ? `Configured · ${claude.model}` : "Not configured (set ANTHROPIC_API_KEY)"}
+      />
+    </>
   );
 }
 

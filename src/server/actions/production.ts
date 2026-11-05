@@ -24,6 +24,7 @@ import {
   ASPECT_RATIOS,
   ASSET_KINDS,
   buildGenerationPrompt,
+  buildVideoPrompt,
   moveInOrder,
   normalizeName,
   parseSceneForm,
@@ -506,11 +507,24 @@ export async function startManualJob(sceneId: string, outputKind: string): Promi
         provider: "higgsfield",
         outputKind: kind.data,
         status: "awaiting_manual",
-        prompt: buildGenerationPrompt({
-          visualPrompt: row.scene.visualPrompt,
-          characters: linked,
-          visualStyle: row.plan.visualStyle,
-        }),
+        prompt:
+          kind.data === "video"
+            ? // The web app may or may not use a start image, so the text variant keeps the character bible.
+              buildVideoPrompt({
+                visualPrompt: row.scene.visualPrompt,
+                action: row.scene.action,
+                dialogue: row.scene.dialogue,
+                characters: linked,
+                visualStyle: row.plan.visualStyle,
+                durationSeconds: row.scene.durationSeconds,
+                startImage: false,
+                voiced: true,
+              })
+            : buildGenerationPrompt({
+                visualPrompt: row.scene.visualPrompt,
+                characters: linked,
+                visualStyle: row.plan.visualStyle,
+              }),
         negativePrompt: row.scene.negativePrompt || null,
       });
       await syncSceneStatus(tx, id.data);
