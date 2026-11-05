@@ -207,3 +207,24 @@ export function SceneReferencePicker({
     </div>
   );
 }
+
+/** Approval blockers a reviewer may accept after checking them: Story QC criticals and Claude's children's-suitability concern. */
+export function isAcceptableBlocker(blocker: string) {
+  return blocker.startsWith("Story consistency:") || blocker.startsWith("Children's suitability:");
+}
+
+/** Lets a reviewer accept those quality-control issues as OK, so they stop blocking review. */
+export function AcceptQcCheckbox({ checked, onChange, disabled }: { checked: boolean; onChange: (checked: boolean) => void; disabled?: boolean }) {
+  return (
+    <label className="flex items-start gap-2 text-sm">
+      <input
+        type="checkbox"
+        checked={checked}
+        disabled={disabled}
+        onChange={(e) => onChange(e.target.checked)}
+        className="mt-0.5 size-3.5 shrink-0 accent-primary"
+      />
+      I checked the story consistency and children&apos;s suitability issues above and they are OK for us. Accept them and continue.
+    </label>
+  );
+}

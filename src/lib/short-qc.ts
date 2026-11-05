@@ -217,9 +217,11 @@ export function evaluateQuality(input: QualityInput): QualityCheck[] {
       ),
     );
     checks.push(
-      check("children", "Children's suitability", a.childSafety.status === "concern" ? "fail" : "pass", [
+      check("children", "Children's suitability", a.childSafety.status === "concern" && !a.childSafety.acceptedAt ? "fail" : "pass", [
         a.childSafety.notes,
-        "Claude's review is advisory; your own review is the real check.",
+        a.childSafety.acceptedAt && a.childSafety.status === "concern"
+          ? "You reviewed this concern and accepted it."
+          : "Claude's review is advisory; your own review is the real check.",
       ]),
     );
   }

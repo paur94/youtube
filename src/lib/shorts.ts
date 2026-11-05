@@ -415,7 +415,8 @@ export const shortAnalysisSchema = z.object({
   childSafety: z.object({ status: z.enum(["pass", "concern"]), notes: z.string() }),
 });
 
-export type ShortAnalysis = z.infer<typeof shortAnalysisSchema>;
+/** `childSafety.acceptedAt`: a reviewer checked Claude's concern and accepted it; a new analysis clears it. */
+export type ShortAnalysis = z.infer<typeof shortAnalysisSchema> & { childSafety: { acceptedAt?: string } };
 
 export const STANDALONE_LABELS: Record<ShortAnalysis["standalone"]["verdict"], string> = {
   strong: "Strong standalone",

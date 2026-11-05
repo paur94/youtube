@@ -15,6 +15,7 @@ import { toast } from "sonner";
 
 import { Field } from "@/components/form-fields";
 import { useAction } from "@/components/production/use-action";
+import { AcceptQcCheckbox, isAcceptableBlocker } from "@/components/qc/qc-actions";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -203,10 +204,14 @@ export function ReviewActions({
 }) {
   const [pending, run] = useAction();
   const [confirmed, setConfirmed] = useState(false);
+  const [acceptQc, setAcceptQc] = useState(false);
   const [rejectOpen, setRejectOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [reason, setReason] = useState("");
   const router = useRouter();
+  const qcBlocked = blockers.some(isAcceptableBlocker);
+  const remaining = acceptQc ? blockers.filter((b) => !isAcceptableBlocker(b)) : blockers;
+  const acceptBox = qcBlocked && <AcceptQcCheckbox checked={acceptQc} onChange={setAcceptQc} disabled={pending} />;
 
   return (
     <div className="grid gap-3">
@@ -219,8 +224,9 @@ export function ReviewActions({
               ))}
             </ul>
           )}
+          {acceptBox}
           <div className="flex flex-wrap gap-2">
-            <Button disabled={pending || blockers.length > 0} onClick={() => run(() => submitShortForReview(shortId))}>
+            <Button disabled={pending || remaining.length > 0} onClick={() => run(() => submitShortForReview(shortId, acceptQc))}>
               <SendIcon />
               Submit for review
             </Button>
@@ -233,13 +239,15 @@ export function ReviewActions({
       )}
       {status === "ready_for_review" && (
         <>
-          {blockers.length > 0 ? (
+          {blockers.length > 0 && (
             <ul className="grid gap-1 text-xs text-muted-foreground">
               {blockers.map((b) => (
                 <li key={b}>· {b}</li>
               ))}
             </ul>
-          ) : (
+          )}
+          {acceptBox}
+          {remaining.length === 0 && (
             <label className="flex items-start gap-2 text-sm">
               <input
                 type="checkbox"
@@ -251,7 +259,7 @@ export function ReviewActions({
             </label>
           )}
           <div className="flex flex-wrap gap-2">
-            <Button disabled={pending || blockers.length > 0 || !confirmed} onClick={() => run(() => approveShort(shortId, confirmed))}>
+            <Button disabled={pending || remaining.length > 0 || !confirmed} onClick={() => run(() => approveShort(shortId, confirmed, acceptQc))}>
               <CheckCircle2Icon />
               Approve Short
             </Button>

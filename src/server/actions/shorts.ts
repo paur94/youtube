@@ -41,7 +41,7 @@ import { buildPublishOrderPrompt, buildShortAnalysisPrompt } from "@/server/ai/s
 import { FfmpegError, getFfmpegVersion, measureLoudness, probeMedia, renderVertical } from "@/server/media/ffmpeg";
 import { resolveMediaPath } from "@/server/media/storage";
 import { markIdeaPublished } from "@/server/pipeline";
-import { consistencyPublishBlocker, shortConsistency } from "@/server/qc/service";
+import { acceptShortCriticalIssues, consistencyPublishBlocker, shortConsistency } from "@/server/qc/service";
 import { getYouTubeConfig, YouTubeError } from "@/server/providers/youtube";
 import { buildQualityInput, getShort, getShortPublishContext, isRenderCurrent } from "@/server/queries/shorts";
 import { getYouTubeClient, getYouTubeConnection } from "@/server/youtube/connection";
@@ -573,7 +573,14 @@ export async function probeShortSource(id: string): Promise<ActionResult> {
 
 // ---------- Review ----------
 
-async function reviewBlockers(short: Short) {
+/** `acceptQc`: the reviewer checked the Story QC critical issues and accepts them as they are. */
+async function reviewBlockers(short: Short, acceptQc = false) {
+  if (acceptQc && (await acceptShortCriticalIssues(short))) revalidatePath("/production", "layout");
+  const a = short.analysis;
+  if (acceptQc && a?.childSafety.status === "concern" && !a.childSafety.acceptedAt) {
+    short.analysis = { ...a, childSafety: { ...a.childSafety, acceptedAt: new Date().toISOString() } };
+    await db.update(shorts).set({ analysis: short.analysis }).where(eq(shorts.id, short.id));
+  }
   const ffmpegAvailable = Boolean(await getFfmpegVersion());
   const consistency = await shortConsistency(short);
   const checks = evaluateQuality({ ...buildQualityInput(short, { ffmpegAvailable, hasDialogue: short.captions.length > 0 }), consistency });
@@ -581,14 +588,14 @@ async function reviewBlockers(short: Short) {
 }
 
 /** Draft -> ready for review, once the automatic checks pass. Approval is a separate, explicit step. */
-export async function submitShortForReview(id: string): Promise<ActionResult> {
+export async function submitShortForReview(id: string, acceptQc = false): Promise<ActionResult> {
   const shortId = idSchema.safeParse(id);
   if (!shortId.success) return { ok: false, message: "Invalid Short id" };
   return guarded("submitShortForReview", async () => {
     const short = await loadShort(shortId.data);
     if (!short) return { ok: false, message: "Short not found" };
     if (short.status !== "draft") return { ok: false, message: "Only draft Shorts can be submitted for review" };
-    const blockers = await reviewBlockers(short);
+    const blockers = await reviewBlockers(short, acceptQc === true);
     if (blockers.length) return { ok: false, message: blockers[0] };
     await db.update(shorts).set({ status: "ready_for_review", reviewNotes: null }).where(eq(shorts.id, short.id));
     revalidateShorts(short.id);
@@ -597,7 +604,7 @@ export async function submitShortForReview(id: string): Promise<ActionResult> {
 }
 
 /** Ready for review -> approved. `confirmed` is the reviewer's explicit sign-off from the UI. */
-export async function approveShort(id: string, confirmed: boolean): Promise<ActionResult> {
+export async function approveShort(id: string, confirmed: boolean, acceptQc = false): Promise<ActionResult> {
   const shortId = idSchema.safeParse(id);
   if (!shortId.success) return { ok: false, message: "Invalid Short id" };
   if (confirmed !== true) return { ok: false, message: "Confirm that you watched the Short before approving it" };
@@ -605,7 +612,7 @@ export async function approveShort(id: string, confirmed: boolean): Promise<Acti
     const short = await loadShort(shortId.data);
     if (!short) return { ok: false, message: "Short not found" };
     if (short.status !== "ready_for_review") return { ok: false, message: "Submit the Short for review before approving it" };
-    const blockers = await reviewBlockers(short);
+    const blockers = await reviewBlockers(short, acceptQc === true);
     if (blockers.length) return { ok: false, message: blockers[0] };
     const result = await db
       .update(shorts)

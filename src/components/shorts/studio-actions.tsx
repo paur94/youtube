@@ -27,6 +27,8 @@ export function ImportShortsButton({ plans }: { plans: Candidate[] }) {
   const [open, setOpen] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set(available));
   const [pending, run] = useAction();
+  const allSelected = available.length > 0 && available.every((id) => selected.has(id));
+  const someSelected = selected.size > 0 && !allSelected;
 
   function toggle(id: string, on: boolean) {
     setSelected((prev) => {
@@ -59,6 +61,21 @@ export function ImportShortsButton({ plans }: { plans: Candidate[] }) {
               never changed: the vertical version is rendered as a new file.
             </DialogDescription>
           </DialogHeader>
+          <label className="flex items-center gap-2 border-b pb-2 text-sm font-medium">
+            <input
+              type="checkbox"
+              checked={allSelected}
+              ref={(el) => {
+                if (el) el.indeterminate = someSelected;
+              }}
+              onChange={(e) => setSelected(new Set(e.target.checked ? available : []))}
+              className="size-3.5 accent-primary"
+            />
+            {allSelected ? "Uncheck all" : "Check all"}
+            <span className="ml-auto text-xs font-normal text-muted-foreground">
+              {selected.size} of {available.length} selected
+            </span>
+          </label>
           <div className="grid max-h-96 gap-4 overflow-y-auto">
             {plans.map((plan) => (
               <div key={plan.id} className="grid gap-1.5">

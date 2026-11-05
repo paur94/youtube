@@ -7,6 +7,7 @@ import { toast } from "sonner";
 
 import { Field } from "@/components/form-fields";
 import { useAction } from "@/components/production/use-action";
+import { AcceptQcCheckbox, isAcceptableBlocker } from "@/components/qc/qc-actions";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -335,8 +336,12 @@ export function VideoReviewActions({
 }) {
   const [pending, run] = useAction();
   const [confirmed, setConfirmed] = useState(false);
+  const [acceptQc, setAcceptQc] = useState(false);
   const [rejectOpen, setRejectOpen] = useState(false);
   const [reason, setReason] = useState("");
+  const qcBlocked = blockers.some(isAcceptableBlocker);
+  const remaining = acceptQc ? blockers.filter((b) => !isAcceptableBlocker(b)) : blockers;
+  const acceptBox = qcBlocked && <AcceptQcCheckbox checked={acceptQc} onChange={setAcceptQc} disabled={pending} />;
   const blockerList = blockers.length > 0 && (
     <ul className="grid gap-1 text-xs text-muted-foreground">
       {blockers.map((b) => (
@@ -350,8 +355,9 @@ export function VideoReviewActions({
       {status === "draft" && (
         <>
           {blockerList}
+          {acceptBox}
           <div className="flex flex-wrap gap-2">
-            <Button disabled={pending || blockers.length > 0} onClick={() => run(() => submitVideoForReview(videoId))}>
+            <Button disabled={pending || remaining.length > 0} onClick={() => run(() => submitVideoForReview(videoId, acceptQc))}>
               <SendIcon />
               Submit for review
             </Button>
@@ -364,7 +370,9 @@ export function VideoReviewActions({
       )}
       {status === "ready_for_review" && (
         <>
-          {blockerList || (
+          {blockerList}
+          {acceptBox}
+          {remaining.length === 0 && (
             <label className="flex items-start gap-2 text-sm">
               <input
                 type="checkbox"
@@ -376,7 +384,7 @@ export function VideoReviewActions({
             </label>
           )}
           <div className="flex flex-wrap gap-2">
-            <Button disabled={pending || blockers.length > 0 || !confirmed} onClick={() => run(() => approveVideo(videoId, confirmed))}>
+            <Button disabled={pending || remaining.length > 0 || !confirmed} onClick={() => run(() => approveVideo(videoId, confirmed, acceptQc))}>
               <CheckCircle2Icon />
               Approve video
             </Button>

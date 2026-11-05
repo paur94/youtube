@@ -558,6 +558,39 @@ export function videoConsistency(video: { clips: { sceneId: string | null; asset
   return evaluateConsistency(video.clips.map((c) => ({ sceneId: c.sceneId, assetId: c.assetId, label: `Scene ${c.sceneNumber}` })));
 }
 
+/**
+ * A reviewer accepts every open critical issue of the clip(s) after checking them: the script
+ * criticals of each scene and the vision criticals of the exact clip. Same effect as dismissing
+ * each issue by hand, so it also unblocks approval and upload. Returns how many were dismissed.
+ */
+export async function acceptCriticalIssues(items: ConsistencyItem[]) {
+  const plans = new Map<string, ReturnType<typeof loadPlanQc>>();
+  let accepted = 0;
+  for (const item of items) {
+    if (!item.sceneId) continue;
+    const [row] = await db.select({ planId: productionScenes.planId }).from(productionScenes).where(eq(productionScenes.id, item.sceneId));
+    if (!row) continue;
+    if (!plans.has(row.planId)) plans.set(row.planId, loadPlanQc(row.planId));
+    const s = (await plans.get(row.planId))?.scenes.find((x) => x.scene.id === item.sceneId);
+    if (!s) continue;
+    const [asset] = item.assetId ? await db.select({ metadata: assets.metadata }).from(assets).where(eq(assets.id, item.assetId)) : [];
+    const report = asset ? readVisionReport(asset.metadata) : null;
+    const ids = [...generationBlockers(s), ...(report ? criticalIssues(report.issues, s.continuity.dismissed) : [])].map((i) => i.id);
+    if (!ids.length) continue;
+    await updateSceneContinuity(s.scene.id, (c) => ({ ...c, dismissed: [...new Set([...c.dismissed, ...ids])] }));
+    accepted += ids.length;
+  }
+  return accepted;
+}
+
+export function acceptShortCriticalIssues(short: Omit<ShortRef, "id">) {
+  return acceptCriticalIssues([{ sceneId: short.sceneId, assetId: short.sourceAssetId, label: `Scene ${short.sceneNumber}` }]);
+}
+
+export function acceptVideoCriticalIssues(video: { clips: { sceneId: string | null; assetId: string; sceneNumber: number }[] }) {
+  return acceptCriticalIssues(video.clips.map((c) => ({ sceneId: c.sceneId, assetId: c.assetId, label: `Scene ${c.sceneNumber}` })));
+}
+
 /** Refuses an upload while the published clip(s) have unresolved critical story mismatches. */
 export function consistencyPublishBlocker(result: Awaited<ReturnType<typeof evaluateConsistency>>) {
   return result?.status === "fail" ? `Story consistency: ${result.details[0] ?? "unresolved critical issues"}` : null;

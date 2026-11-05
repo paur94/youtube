@@ -35,7 +35,7 @@ import { buildVideoMetadataPrompt } from "@/server/ai/video-prompt";
 import { FfmpegError, getFfmpegVersion, measureLoudness, probeMedia, renderTimeline } from "@/server/media/ffmpeg";
 import { resolveMediaPath } from "@/server/media/storage";
 import { markIdeaPublished } from "@/server/pipeline";
-import { consistencyPublishBlocker, videoConsistency } from "@/server/qc/service";
+import { acceptVideoCriticalIssues, consistencyPublishBlocker, videoConsistency } from "@/server/qc/service";
 import { getYouTubeConfig, YouTubeError } from "@/server/providers/youtube";
 import { buildVideoQualityInput, getVideo, getVideoPublishContext, isRenderRunning, isVideoRenderCurrent, RENDER_STALE_MS } from "@/server/queries/videos";
 import { getYouTubeClient, getYouTubeConnection } from "@/server/youtube/connection";
@@ -549,21 +549,23 @@ export async function suggestVideoMetadata(id: string): Promise<ActionResult> {
 
 // ---------- Review ----------
 
-async function reviewBlockers(video: Video) {
+/** `acceptQc`: the reviewer checked the Story QC critical issues and accepts them as they are. */
+async function reviewBlockers(video: Video, acceptQc = false) {
+  if (acceptQc && (await acceptVideoCriticalIssues(video))) revalidatePath("/production", "layout");
   const ffmpegAvailable = Boolean(await getFfmpegVersion());
   const consistency = await videoConsistency(video);
   const checks = evaluateVideoQuality({ ...buildVideoQualityInput(video, ffmpegAvailable), consistency });
   return videoApprovalBlockers(checks, { rendered: Boolean(video.renderFilePath), metadataApproved: Boolean(video.metadataApprovedAt) });
 }
 
-export async function submitVideoForReview(id: string): Promise<ActionResult> {
+export async function submitVideoForReview(id: string, acceptQc = false): Promise<ActionResult> {
   const videoId = idSchema.safeParse(id);
   if (!videoId.success) return { ok: false, message: "Invalid video id" };
   return guarded("submitVideoForReview", async () => {
     const video = await loadVideo(videoId.data);
     if (!video) return { ok: false, message: "Video not found" };
     if (video.status !== "draft") return { ok: false, message: "Only draft videos can be submitted for review" };
-    const blockers = await reviewBlockers(video);
+    const blockers = await reviewBlockers(video, acceptQc === true);
     if (blockers.length) return { ok: false, message: blockers[0] };
     await db.update(videos).set({ status: "ready_for_review", reviewNotes: null }).where(eq(videos.id, video.id));
     revalidateVideos(video.id);
@@ -572,7 +574,7 @@ export async function submitVideoForReview(id: string): Promise<ActionResult> {
 }
 
 /** Ready for review -> approved. `confirmed` is the reviewer's explicit sign-off from the UI. */
-export async function approveVideo(id: string, confirmed: boolean): Promise<ActionResult> {
+export async function approveVideo(id: string, confirmed: boolean, acceptQc = false): Promise<ActionResult> {
   const videoId = idSchema.safeParse(id);
   if (!videoId.success) return { ok: false, message: "Invalid video id" };
   if (confirmed !== true) return { ok: false, message: "Confirm that you watched the video before approving it" };
@@ -580,7 +582,7 @@ export async function approveVideo(id: string, confirmed: boolean): Promise<Acti
     const video = await loadVideo(videoId.data);
     if (!video) return { ok: false, message: "Video not found" };
     if (video.status !== "ready_for_review") return { ok: false, message: "Submit the video for review before approving it" };
-    const blockers = await reviewBlockers(video);
+    const blockers = await reviewBlockers(video, acceptQc === true);
     if (blockers.length) return { ok: false, message: blockers[0] };
     const result = await db
       .update(videos)

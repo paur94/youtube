@@ -6,6 +6,7 @@ import {
   CircleCheckBigIcon,
   DownloadIcon,
   FileJsonIcon,
+  Loader2Icon,
   RefreshCwIcon,
   Undo2Icon,
   UploadIcon,
@@ -157,7 +158,7 @@ export function QueueActions({
         </Button>
       )}
 
-      <Dialog open={uploadOpen} onOpenChange={setUploadOpen}>
+      <Dialog open={uploadOpen} onOpenChange={(open) => !pending && setUploadOpen(open)}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Upload to YouTube</DialogTitle>
@@ -165,7 +166,7 @@ export function QueueActions({
               Uploads “{title}” to {channelTitle} with its approved metadata. Nothing is sent to YouTube until you confirm here.
             </DialogDescription>
           </DialogHeader>
-          <fieldset className="grid gap-3">
+          <fieldset className="grid gap-3" disabled={pending}>
             <legend className="sr-only">When it goes public</legend>
             <label className="flex items-start gap-2 text-sm">
               <input
@@ -203,6 +204,7 @@ export function QueueActions({
             <input
               type="checkbox"
               checked={approved}
+              disabled={pending}
               onChange={(e) => setApproved(e.target.checked)}
               className="mt-0.5 size-3.5 shrink-0 accent-primary"
             />
@@ -218,7 +220,7 @@ export function QueueActions({
               disabled={pending || !approved}
               onClick={() => run(() => a.publish(shortId, mode, approved), () => setUploadOpen(false))}
             >
-              <UploadIcon />
+              {pending ? <Loader2Icon className="animate-spin" /> : <UploadIcon />}
               {pending ? "Uploading…" : mode === "now" ? "Publish" : "Upload and schedule"}
             </Button>
           </DialogFooter>
