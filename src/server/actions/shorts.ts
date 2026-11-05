@@ -10,22 +10,27 @@ import { z } from "zod";
 import { db } from "@/db";
 import { assets, productionPlans, productionScenes, type Short, shortGenerations, shortMetrics, shorts } from "@/db/schema";
 import { approvalBlockers, evaluateQuality } from "@/lib/short-qc";
-import { buildAssFile, computeFraming } from "@/lib/short-video";
+import { buildAssFile, computeFraming, type MediaProbe } from "@/lib/short-video";
 import {
   applyPublishOrder,
   buildCaptionsFromDialogue,
+  buildMergedCaptions,
   buildYouTubeMetadata,
   DEFAULT_VIDEO_SETTINGS,
   isPublishable,
   isShortLocked,
+  MERGE_MAX_SCENES,
+  mergedTitle,
   normalizeHashtags,
   parseCaptionLines,
   parseMetricsForm,
   parseShortMetadataForm,
   publishOrderSchema,
   renderKey,
+  SHORT_MAX_SECONDS,
   shortAnalysisSchema,
   type ShortMetadataState,
+  type ShortPart,
   type ShortStatus,
   videoSettingsSchema,
 } from "@/lib/shorts";
@@ -38,7 +43,7 @@ import {
   type StructuredResult,
 } from "@/server/ai/claude";
 import { buildPublishOrderPrompt, buildShortAnalysisPrompt } from "@/server/ai/shorts-prompt";
-import { FfmpegError, getFfmpegVersion, measureLoudness, probeMedia, renderVertical } from "@/server/media/ffmpeg";
+import { FfmpegError, getFfmpegVersion, joinClips, measureLoudness, probeMedia, renderVertical } from "@/server/media/ffmpeg";
 import { resolveMediaPath } from "@/server/media/storage";
 import { markIdeaPublished } from "@/server/pipeline";
 import { acceptShortCriticalIssues, consistencyPublishBlocker, shortConsistency } from "@/server/qc/service";
@@ -144,14 +149,143 @@ export async function importShorts(sceneIds: string[]): Promise<ActionResult> {
   });
 }
 
+type SceneClipRow = { scene: typeof productionScenes.$inferSelect; asset: typeof assets.$inferSelect };
+
+/** Loads the scenes' approved final clips in story order, or says why they can't be joined. */
+async function loadMergeScenes(
+  sceneIds: string[],
+): Promise<{ error: string } | { error: null; plan: typeof productionPlans.$inferSelect; rows: SceneClipRow[] }> {
+  const rows = await db
+    .select({ scene: productionScenes, plan: productionPlans, asset: assets })
+    .from(productionScenes)
+    .innerJoin(productionPlans, eq(productionScenes.planId, productionPlans.id))
+    .leftJoin(assets, eq(productionScenes.selectedAssetId, assets.id))
+    .where(inArray(productionScenes.id, sceneIds))
+    .orderBy(asc(productionScenes.position), asc(productionScenes.createdAt));
+  if (rows.length !== new Set(sceneIds).size) return { error: "Some of the scenes no longer exist" };
+  if (new Set(rows.map((r) => r.plan.id)).size > 1) return { error: "Only scenes of the same story can be merged" };
+  const missing = rows.find((r) => !r.asset?.filePath || r.asset.kind !== "video" || r.asset.status !== "approved");
+  if (missing) return { error: `Scene ${missing.scene.position + 1} has no approved final video on disk` };
+  return { error: null, plan: rows[0].plan, rows: rows.map((r): SceneClipRow => ({ scene: r.scene, asset: r.asset! })) };
+}
+
+/** Joins the scenes' clips into a new source file in the Short's folder. The scene clips are only read. */
+async function joinSceneClips(shortId: string, rows: SceneClipRow[]) {
+  const probes: (MediaProbe & { durationSeconds: number })[] = [];
+  for (const { scene, asset } of rows) {
+    const probe = await probeMedia(asset.filePath!);
+    if (!probe.width || !probe.height || !probe.durationSeconds) {
+      throw new FfmpegError(`Scene ${scene.position + 1}: the clip has no measurable video stream`);
+    }
+    probes.push({ ...probe, durationSeconds: probe.durationSeconds });
+  }
+  const total = probes.reduce((sum, p) => sum + p.durationSeconds, 0);
+  if (total > SHORT_MAX_SECONDS) {
+    return { error: `Together the scenes run ${Math.round(total)}s; a Short may be at most ${SHORT_MAX_SECONDS}s` };
+  }
+  const filePath = await joinClips({
+    clips: rows.map(({ asset }, i) => ({ filePath: asset.filePath!, durationSeconds: probes[i].durationSeconds, hasAudio: probes[i].hasAudio, fps: probes[i].fps })),
+    width: probes[0].width!,
+    height: probes[0].height!,
+    folder: `shorts/${shortId}`,
+    fileName: `joined-${randomUUID()}.mp4`,
+  });
+  const parts: ShortPart[] = rows.map(({ scene, asset }, i) => ({
+    sceneId: scene.id,
+    assetId: asset.id,
+    sceneNumber: scene.position + 1,
+    title: scene.title,
+    filePath: asset.filePath!,
+    durationSeconds: probes[i].durationSeconds,
+  }));
+  return {
+    error: null,
+    filePath,
+    probe: await probeMedia(filePath),
+    parts,
+    captions: buildMergedCaptions(rows.map(({ scene }, i) => ({ dialogue: scene.dialogue, durationSeconds: probes[i].durationSeconds }))),
+  };
+}
+
+/**
+ * Creates one draft Short from several scenes of the same story, joined back to back in story
+ * order. The scenes may also have Shorts of their own.
+ */
+export async function mergeScenesIntoShort(sceneIds: string[]): Promise<ActionResult> {
+  const ids = z
+    .array(idSchema)
+    .min(2, "Select at least two scenes to merge")
+    .max(MERGE_MAX_SCENES, `Merge at most ${MERGE_MAX_SCENES} scenes`)
+    .safeParse(sceneIds);
+  if (!ids.success) return { ok: false, message: ids.error.issues[0].message };
+  if (!(await getFfmpegVersion())) {
+    return { ok: false, message: "FFmpeg isn't installed. Install it or set FFMPEG_PATH and FFPROBE_PATH in .env.local, then restart." };
+  }
+
+  return guarded("mergeScenesIntoShort", async () => {
+    const loaded = await loadMergeScenes(ids.data);
+    if (loaded.error !== null) return { ok: false, message: loaded.error };
+    const { plan, rows } = loaded;
+
+    const key = rows.map((r) => r.scene.id).join(",");
+    const existing = await db.select({ parts: shorts.parts }).from(shorts).where(eq(shorts.planId, plan.id));
+    if (existing.some((s) => s.parts?.map((p) => p.sceneId).join(",") === key)) {
+      return { ok: false, message: "A merged Short with exactly these scenes already exists" };
+    }
+
+    const id = randomUUID();
+    const joined = await joinSceneClips(id, rows);
+    if (joined.error !== null) return { ok: false, message: joined.error };
+    const title = mergedTitle(rows.map((r) => r.scene.title));
+    await db.insert(shorts).values({
+      id,
+      planId: plan.id,
+      storyId: plan.storyId,
+      sceneTitle: title,
+      sceneNumber: rows[0].scene.position + 1,
+      parts: joined.parts,
+      sourceFilePath: joined.filePath,
+      sourceProbe: joined.probe,
+      title: title.slice(0, 100),
+      publishOrder: rows[0].scene.position + 1,
+      captions: joined.captions,
+      videoSettings: DEFAULT_VIDEO_SETTINGS,
+    });
+    revalidateShorts();
+    return { ok: true, message: `Merged ${rows.length} scenes into one ${Math.round(joined.probe.durationSeconds ?? 0)}s Short` };
+  });
+}
+
 /** Points the Short at the scene's current final clip (after it was replaced in production). */
 export async function switchToCurrentSceneClip(id: string): Promise<ActionResult> {
   const shortId = idSchema.safeParse(id);
   if (!shortId.success) return { ok: false, message: "Invalid Short id" };
   return guarded("switchToCurrentSceneClip", async () => {
     const short = await loadShort(shortId.data);
+    if (short && isShortLocked(short)) return { ok: false, message: LOCKED };
+    if (short?.parts?.length) {
+      if (!(await getFfmpegVersion())) return { ok: false, message: "FFmpeg isn't installed" };
+      const sceneIds = short.parts.map((p) => p.sceneId).filter((s): s is string => s !== null);
+      if (sceneIds.length !== short.parts.length) return { ok: false, message: "Some of the scenes no longer exist" };
+      const loaded = await loadMergeScenes(sceneIds);
+      if (loaded.error !== null) return { ok: false, message: loaded.error };
+      const joined = await joinSceneClips(short.id, loaded.rows);
+      if (joined.error !== null) return { ok: false, message: joined.error };
+      await db
+        .update(shorts)
+        .set({
+          parts: joined.parts,
+          sourceFilePath: joined.filePath,
+          sourceProbe: joined.probe,
+          captions: joined.captions,
+          captionsReviewed: false,
+          ...afterEdit(short.status),
+        })
+        .where(eq(shorts.id, short.id));
+      revalidateShorts(short.id);
+      return { ok: true, message: "Joined the scenes' current final clips again and rebuilt the captions. Check them and render again." };
+    }
     if (!short?.sceneId) return { ok: false, message: "The scene no longer exists" };
-    if (isShortLocked(short)) return { ok: false, message: LOCKED };
     const [row] = await db
       .select({ asset: assets })
       .from(productionScenes)
@@ -222,8 +356,47 @@ export async function analyzeShort(id: string): Promise<ActionResult> {
   if (isShortLocked(short)) return { ok: false, message: LOCKED };
 
   const content = short.story?.content ?? null;
-  const storyScene = storySceneFor(content, short.sceneNumber, short.sceneTitle);
   const summary = (s: { title: string; action: string } | null) => (s ? `"${s.title}": ${s.action.slice(0, 300)}` : null);
+  // A merged Short is described as one longer scene: each part's script, labelled with its scene number.
+  const parts = (short.parts ?? []).map((p) => {
+    const scene = short.partScenes.find((s) => s.id === p.sceneId);
+    const storyScene = storySceneFor(content, p.sceneNumber, p.title);
+    return {
+      number: p.sceneNumber,
+      title: scene?.title ?? p.title,
+      setting: scene?.setting ?? storyScene?.setting ?? "",
+      action: scene?.action ?? storyScene?.action ?? "",
+      narration: scene?.narration ?? storyScene?.narration ?? "",
+      dialogue: scene?.dialogue ?? storyScene?.dialogue ?? [],
+      soundEffects: storyScene?.soundEffects ?? [],
+      musicMood: storyScene?.musicMood ?? "",
+    };
+  });
+  const labelled = (pick: (p: (typeof parts)[number]) => string) =>
+    parts
+      .filter((p) => pick(p))
+      .map((p) => `[Scene ${p.number}] ${pick(p)}`)
+      .join("\n");
+  const storyScene = parts.length ? null : storySceneFor(content, short.sceneNumber, short.sceneTitle);
+  const scene = parts.length
+    ? {
+        title: short.sceneTitle,
+        setting: labelled((p) => p.setting),
+        action: labelled((p) => p.action),
+        narration: labelled((p) => p.narration),
+        dialogue: parts.flatMap((p) => p.dialogue),
+        soundEffects: [...new Set(parts.flatMap((p) => p.soundEffects))],
+        musicMood: [...new Set(parts.map((p) => p.musicMood).filter(Boolean))].join(" → "),
+      }
+    : {
+        title: short.scene?.title ?? short.sceneTitle,
+        setting: short.scene?.setting ?? storyScene?.setting ?? "",
+        action: short.scene?.action ?? storyScene?.action ?? "",
+        narration: short.scene?.narration ?? storyScene?.narration ?? "",
+        dialogue: short.scene?.dialogue ?? storyScene?.dialogue ?? [],
+        soundEffects: storyScene?.soundEffects ?? [],
+        musicMood: storyScene?.musicMood ?? "",
+      };
   const prompt = buildShortAnalysisPrompt({
     story:
       short.story && content
@@ -236,16 +409,11 @@ export async function analyzeShort(id: string): Promise<ActionResult> {
           }
         : null,
     scene: {
+      ...scene,
       number: short.sceneNumber,
-      total: short.sceneCount || short.sceneNumber,
-      title: short.scene?.title ?? short.sceneTitle,
-      setting: short.scene?.setting ?? storyScene?.setting ?? "",
-      action: short.scene?.action ?? storyScene?.action ?? "",
-      narration: short.scene?.narration ?? storyScene?.narration ?? "",
-      dialogue: short.scene?.dialogue ?? storyScene?.dialogue ?? [],
+      total: short.sceneCount || (short.parts?.at(-1)?.sceneNumber ?? short.sceneNumber),
       durationSeconds: short.sourceProbe?.durationSeconds ?? null,
-      soundEffects: storyScene?.soundEffects ?? [],
-      musicMood: storyScene?.musicMood ?? "",
+      mergedNumbers: parts.length ? parts.map((p) => p.number) : undefined,
     },
     previousScene: summary(short.previousScene),
     nextScene: summary(short.nextScene),
@@ -342,7 +510,7 @@ export async function suggestPublishOrder(planId: string): Promise<ActionResult>
 
   const prompt = buildPublishOrderPrompt(
     storyTitle,
-    rows.map((s, i) => ({ number: i + 1, sceneNumber: s.sceneNumber, title: s.title, analysis: s.analysis })),
+    rows.map((s, i) => ({ number: i + 1, sceneNumber: s.sceneNumber, title: s.title, analysis: s.analysis, parts: s.parts })),
   );
   const config = getClaudeConfig();
   const result = await runStructuredGeneration(
@@ -477,6 +645,22 @@ export async function rebuildCaptions(id: string): Promise<ActionResult> {
     const short = await loadShort(shortId.data);
     if (!short) return { ok: false, message: "Short not found" };
     if (isShortLocked(short)) return { ok: false, message: LOCKED };
+    if (short.parts?.length) {
+      const sceneIds = short.parts.map((p) => p.sceneId).filter((s): s is string => s !== null);
+      const scenes = sceneIds.length
+        ? await db.select({ id: productionScenes.id, dialogue: productionScenes.dialogue }).from(productionScenes).where(inArray(productionScenes.id, sceneIds))
+        : [];
+      // A deleted scene keeps its place on the timeline, without captions.
+      const captions = buildMergedCaptions(
+        short.parts.map((p) => ({ dialogue: scenes.find((s) => s.id === p.sceneId)?.dialogue ?? [], durationSeconds: p.durationSeconds })),
+      );
+      await db
+        .update(shorts)
+        .set({ captions, captionsReviewed: false, ...afterEdit(short.status) })
+        .where(eq(shorts.id, short.id));
+      revalidateShorts(short.id);
+      return { ok: true, message: `${captions.length} captions rebuilt from the scenes' dialogue. Check their timing.` };
+    }
     if (!short.sceneId) return { ok: false, message: "The scene no longer exists" };
     const [scene] = await db
       .select({ dialogue: productionScenes.dialogue, durationSeconds: productionScenes.durationSeconds })

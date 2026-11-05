@@ -28,7 +28,8 @@ import { HedraPanel } from "./hedra-panel";
 import { ImportAssetDialog } from "./import-asset-dialog";
 import { useAction } from "./use-action";
 
-type StartImage = { id: string; label: string };
+/** `keyframe` marks this scene's own approved keyframe, as opposed to a last frame or reference. */
+type StartImage = { id: string; label: string; keyframe?: boolean };
 
 // Long model names shrink to the column and truncate instead of overlapping the next field.
 const TRIGGER = "w-full min-w-0 *:data-[slot=select-value]:block *:data-[slot=select-value]:truncate";
@@ -85,6 +86,7 @@ export function GenerationPanel({
   const model = getHiggsfieldModel(modelId);
   const providerName = model?.provider === "replicate" ? "Replicate" : "Higgsfield";
   const needsStart = model?.input === "image";
+  const startImage = startImages.find((s) => s.id === startAssetId);
   const activePrompt = kind === "video" ? (needsStart ? videoPrompts.fromImage : videoPrompts.fromText) : prompt;
   const blocked = concerns.length > 0 || !prompt.trim();
 
@@ -189,6 +191,15 @@ export function GenerationPanel({
                 </div>
               )}
             </div>
+            {needsStart && startImage && !startImage.keyframe && (
+              <p className="flex items-start gap-2 text-xs text-amber-300">
+                <TriangleAlertIcon className="mt-0.5 size-3.5 shrink-0" />
+                <span>
+                  The start image is “{startImage.label}”, not this scene&apos;s keyframe. The clip will open on that
+                  frame instead of the composition approved for this scene.
+                </span>
+              </p>
+            )}
             {model?.maxReferenceImages && (characterReferences.length > 0 || sceneReferenceCount > 0) && (
               <ReferenceNote characters={characterReferences} sceneReferences={sceneReferenceCount} />
             )}

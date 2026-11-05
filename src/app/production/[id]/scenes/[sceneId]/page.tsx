@@ -128,6 +128,7 @@ async function SceneData({ params }: Pick<Props, "params">) {
       .map((a) => ({
         id: a.id,
         label: lastFrameOf(a) !== undefined ? `Last frame of scene ${lastFrameOf(a)} r${a.revision}` : `Scene keyframe r${a.revision}`,
+        keyframe: lastFrameOf(a) === undefined,
       })),
     ...detail.references.map((r) => ({ id: r.id, label: `${r.characterName} reference` })),
   ];

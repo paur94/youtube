@@ -1,0 +1,1 @@
+ALTER TABLE "shorts" ADD COLUMN "parts" jsonb;

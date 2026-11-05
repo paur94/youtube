@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   applyPublishOrder,
   buildCaptionsFromDialogue,
+  buildMergedCaptions,
   buildYouTubeMetadata,
   chunkLine,
   DEFAULT_VIDEO_SETTINGS,
@@ -11,12 +12,14 @@ import {
   isOverdue,
   isPublishable,
   isShortLocked,
+  mergedTitle,
   metricState,
   normalizeHashtags,
   parseCaptionLines,
   parseMetricsForm,
   parseShortMetadataForm,
   renderKey,
+  scenesLabel,
   toSrt,
   validateCaptions,
 } from "./shorts";
@@ -262,5 +265,33 @@ describe("analytics", () => {
     expect(metricState(false, null)).toBe("not_published");
     expect(metricState(true, null)).toBe("not_entered");
     expect(metricState(true, "0")).toBe("value");
+  });
+});
+
+describe("merged Shorts", () => {
+  const part = (sceneNumber: number) => ({ sceneId: null, assetId: "a", sceneNumber, title: "", filePath: "", durationSeconds: 5 });
+
+  it("labels single, consecutive and gapped scenes", () => {
+    expect(scenesLabel({ sceneNumber: 3, parts: null })).toBe("Scene 3");
+    expect(scenesLabel({ sceneNumber: 2, parts: [part(2), part(3), part(4)] })).toBe("Scenes 2–4");
+    expect(scenesLabel({ sceneNumber: 2, parts: [part(2), part(3), part(5)] })).toBe("Scenes 2, 3, 5");
+  });
+
+  it("shifts each scene's captions by the length of the clips before it", () => {
+    const cues = buildMergedCaptions([
+      { dialogue, durationSeconds: 10 },
+      { dialogue: [], durationSeconds: 4 },
+      { dialogue: [{ character: "Mila", line: "Hi!" }], durationSeconds: 3 },
+    ]);
+    const first = buildCaptionsFromDialogue(dialogue, 10);
+    expect(cues.slice(0, first.length)).toEqual(first);
+    const last = cues.at(-1)!;
+    expect(last.text).toBe("Hi!");
+    expect(last.start).toBeCloseTo(14.4);
+    expect(last.end).toBeLessThanOrEqual(17);
+  });
+
+  it("titles a merged Short after its scenes", () => {
+    expect(mergedTitle([" Rainy day ", "", "A rectangle!"])).toBe("Rainy day → A rectangle!");
   });
 });

@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 
 import { buildConcatArgs, type EditSettings, parseProgressSeconds, pickFps, type VideoClip } from "@/lib/long-video";
-import { type AudioLevels, buildRenderArgs, type Framing, type MediaProbe, parseLoudness, parseProbe } from "@/lib/short-video";
+import { type AudioLevels, buildJoinArgs, buildRenderArgs, type Framing, type MediaProbe, parseLoudness, parseProbe } from "@/lib/short-video";
 
 import { resolveMediaPath } from "./storage";
 
@@ -124,6 +124,36 @@ export async function renderVertical(input: {
     return relative;
   } finally {
     await rm(work, { recursive: true, force: true });
+  }
+}
+
+/** Joins scene clips into one new source file for a merged Short. The clips are only read. */
+export async function joinClips(input: {
+  clips: { filePath: string; durationSeconds: number; hasAudio: boolean; fps: number | null }[];
+  width: number;
+  height: number;
+  folder: string;
+  fileName: string;
+}) {
+  const relative = `${input.folder}/${input.fileName}`;
+  if (input.clips.some((c) => c.filePath === relative)) throw new FfmpegError("Refusing to overwrite a source clip");
+  const outputPath = absolute(relative);
+  await mkdir(path.dirname(outputPath), { recursive: true });
+  try {
+    const args = buildJoinArgs({
+      clips: input.clips.map((c) => ({ ...c, inputPath: absolute(c.filePath) })),
+      width: input.width,
+      height: input.height,
+      fps: pickFps(input.clips),
+      outputPath,
+    });
+    await run(getFfmpegPaths().ffmpeg, args, { timeout: RENDER_TIMEOUT_MS });
+    const info = await stat(outputPath);
+    if (!info.size) throw new FfmpegError("FFmpeg produced an empty file");
+    return relative;
+  } catch (error) {
+    await rm(outputPath, { force: true }).catch(() => undefined);
+    throw error;
   }
 }
 

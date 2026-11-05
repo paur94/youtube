@@ -98,7 +98,8 @@ export async function getShort(id: string) {
     .where(eq(shorts.id, id));
   if (!row) return null;
 
-  const [siblings, generations, currentAsset] = await Promise.all([
+  const partIds = (row.short.parts ?? []).map((p) => p.sceneId).filter((s): s is string => s !== null);
+  const [siblings, generations, currentAsset, partRows] = await Promise.all([
     row.short.planId
       ? db
           .select({ id: productionScenes.id, title: productionScenes.title, action: productionScenes.action })
@@ -114,9 +115,37 @@ export async function getShort(id: string) {
           .where(eq(assets.id, row.scene.selectedAssetId))
           .then((r) => r[0] ?? null)
       : Promise.resolve(null),
+    partIds.length
+      ? db
+          .select({
+            scene: {
+              id: productionScenes.id,
+              position: productionScenes.position,
+              title: productionScenes.title,
+              setting: productionScenes.setting,
+              action: productionScenes.action,
+              narration: productionScenes.narration,
+              dialogue: productionScenes.dialogue,
+              selectedAssetId: productionScenes.selectedAssetId,
+            },
+            asset: { id: assets.id, filePath: assets.filePath, kind: assets.kind, status: assets.status },
+          })
+          .from(productionScenes)
+          .leftJoin(assets, eq(productionScenes.selectedAssetId, assets.id))
+          .where(inArray(productionScenes.id, partIds))
+          .orderBy(asc(productionScenes.position))
+      : Promise.resolve([]),
   ]);
 
-  const index = row.scene ? siblings.findIndex((s) => s.id === row.scene!.id) : -1;
+  // The final clip changed in the Production Studio after this Short was imported.
+  const replaced = (asset: { id: string; filePath: string | null; kind: string; status: string } | null, usedId: string | null) =>
+    Boolean(asset && asset.kind === "video" && asset.status === "approved" && asset.filePath && asset.id !== usedId);
+
+  // A merged Short's neighbours are the scenes around its first and last part.
+  const first = row.scene?.id ?? partRows[0]?.scene.id;
+  const last = row.scene?.id ?? partRows.at(-1)?.scene.id;
+  const firstIndex = first ? siblings.findIndex((s) => s.id === first) : -1;
+  const lastIndex = last ? siblings.findIndex((s) => s.id === last) : -1;
   return {
     ...row.short,
     plan: row.plan?.id ? row.plan : null,
@@ -124,18 +153,15 @@ export async function getShort(id: string) {
     madeForKids: row.idea?.madeForKids ?? true,
     containsSyntheticMedia: row.idea?.containsSyntheticMedia ?? true,
     scene: row.scene?.id ? row.scene : null,
+    /** The scenes of a merged Short that still exist, in story order. */
+    partScenes: partRows.map((r) => r.scene),
     sceneCount: siblings.length,
-    previousScene: index > 0 ? siblings[index - 1] : null,
-    nextScene: index >= 0 && index < siblings.length - 1 ? siblings[index + 1] : null,
+    previousScene: firstIndex > 0 ? siblings[firstIndex - 1] : null,
+    nextScene: lastIndex >= 0 && lastIndex < siblings.length - 1 ? siblings[lastIndex + 1] : null,
     generations,
-    // The scene's final clip changed in the Production Studio after this Short was imported.
-    sourceChanged: Boolean(
-      currentAsset &&
-        currentAsset.kind === "video" &&
-        currentAsset.status === "approved" &&
-        currentAsset.filePath &&
-        currentAsset.id !== row.short.sourceAssetId,
-    ),
+    sourceChanged: row.short.parts?.length
+      ? partRows.some((r) => replaced(r.asset, row.short.parts!.find((p) => p.sceneId === r.scene.id)?.assetId ?? null))
+      : replaced(currentAsset, row.short.sourceAssetId),
   };
 }
 

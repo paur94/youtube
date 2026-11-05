@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   aspectLabel,
   buildAssFile,
+  buildJoinArgs,
   buildFilterGraph,
   buildRenderArgs,
   computeFraming,
@@ -74,6 +75,33 @@ describe("FFmpeg command", () => {
     expect(args[args.indexOf("-af") + 1]).toMatch(/^loudnorm=I=-14/);
     const quiet = buildRenderArgs({ inputPath: "a", outputPath: "b", framing: computeFraming(1280, 720, settings), subtitlesFile: null, normalizeAudio: false });
     expect(quiet).not.toContain("-af");
+  });
+});
+
+describe("joining scene clips", () => {
+  it("fits every clip into the first frame, fills missing audio and cuts to exact lengths", () => {
+    const args = buildJoinArgs({
+      clips: [
+        { inputPath: "a.mp4", durationSeconds: 8, hasAudio: true },
+        { inputPath: "b.mp4", durationSeconds: 6.5, hasAudio: false },
+      ],
+      width: 1279,
+      height: 720,
+      fps: 24,
+      outputPath: "out.mp4",
+    });
+    const graph = args[args.indexOf("-filter_complex") + 1];
+    expect(args.filter((a) => a === "-i")).toHaveLength(3);
+    expect(args).toContain("anullsrc=r=48000:cl=stereo");
+    expect(graph).toContain("scale=1280:720:force_original_aspect_ratio=decrease");
+    expect(graph).toContain("trim=duration=6.5");
+    expect(graph).toContain("[2:a]aformat");
+    expect(graph).toContain("[v0][a0][v1][a1]concat=n=2:v=1:a=1[v][a]");
+    expect(args.at(-1)).toBe("out.mp4");
+  });
+
+  it("needs at least two clips", () => {
+    expect(() => buildJoinArgs({ clips: [{ inputPath: "a", durationSeconds: 1, hasAudio: true }], width: 2, height: 2, fps: 30, outputPath: "o" })).toThrow();
   });
 });
 

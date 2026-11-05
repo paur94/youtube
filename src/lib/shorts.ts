@@ -52,6 +52,36 @@ export const HASHTAGS_RECOMMENDED_MAX = 15;
 export const SHORT_MAX_SECONDS = 180;
 export const SHORT_COMFORT_SECONDS = 60;
 
+// ---------- Merged Shorts ----------
+
+/**
+ * One scene of a Short that joins several scenes of the same story into one clip. A snapshot from
+ * when the clips were joined: it stays when the scene or its asset is deleted.
+ */
+export type ShortPart = {
+  sceneId: string | null;
+  assetId: string;
+  sceneNumber: number;
+  title: string;
+  filePath: string;
+  durationSeconds: number;
+};
+
+export const MERGE_MAX_SCENES = 20;
+
+/** "Scene 3", "Scenes 2–4" or "Scenes 2, 3, 5". */
+export function scenesLabel(short: { sceneNumber: number; parts: ShortPart[] | null }) {
+  const numbers = short.parts?.length ? short.parts.map((p) => p.sceneNumber) : [short.sceneNumber];
+  if (numbers.length === 1) return `Scene ${numbers[0]}`;
+  const consecutive = numbers.every((n, i) => i === 0 || n === numbers[i - 1] + 1);
+  return consecutive ? `Scenes ${numbers[0]}–${numbers.at(-1)}` : `Scenes ${numbers.join(", ")}`;
+}
+
+/** Title for a new merged Short, from its scenes' titles. */
+export function mergedTitle(titles: string[]) {
+  return titles.map((t) => t.trim()).filter(Boolean).join(" → ");
+}
+
 // ---------- Video settings ----------
 
 export const videoSettingsSchema = z.object({
@@ -160,6 +190,22 @@ export function buildCaptionsFromDialogue(
     if (c.gapAfter) t += PAUSE * perUnit;
     return { start, end: Math.max(end, round1(start + 0.1)), text: c.text };
   });
+}
+
+/**
+ * Estimated captions for clips joined back to back: each scene's dialogue is spread over its own
+ * clip, then shifted by the length of the clips before it.
+ */
+export function buildMergedCaptions(parts: { dialogue: StoryScene["dialogue"]; durationSeconds: number }[]): CaptionCue[] {
+  let offset = 0;
+  const cues: CaptionCue[] = [];
+  for (const part of parts) {
+    for (const c of buildCaptionsFromDialogue(part.dialogue, part.durationSeconds)) {
+      cues.push({ start: round1(c.start + offset), end: round1(c.end + offset), text: c.text });
+    }
+    offset += part.durationSeconds;
+  }
+  return cues;
 }
 
 function formatSeconds(n: number) {

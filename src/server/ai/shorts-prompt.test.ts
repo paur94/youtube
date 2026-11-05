@@ -34,6 +34,12 @@ describe("buildShortAnalysisPrompt", () => {
     expect(user).toContain(`Target age: ${AGE_GROUP_LABELS["3-5"]}`);
   });
 
+  it("describes a merged Short as one clip of several scenes", () => {
+    const { user } = buildShortAnalysisPrompt({ story: null, scene: { ...scene, mergedNumbers: [2, 3, 4] }, previousScene: null, nextScene: null });
+    expect(user).toContain("joins scenes 2, 3, 4 back to back");
+    expect(user).toContain('<scene numbers="2,3,4" of="8">');
+  });
+
   it("works when the story was deleted", () => {
     const { user } = buildShortAnalysisPrompt({ story: null, scene: { ...scene, durationSeconds: null }, previousScene: null, nextScene: null });
     expect(user).toContain("the original story was deleted");

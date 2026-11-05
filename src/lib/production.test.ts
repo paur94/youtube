@@ -13,6 +13,7 @@ import {
   findPromptConcerns,
   isReadyForAssembly,
   moveInOrder,
+  parseDialogueRow,
   parseCharacterForm,
   parseSceneForm,
   parseTimeline,
@@ -170,9 +171,9 @@ describe("describeDialogue", () => {
       { timeline: parseTimeline(action).segments },
     );
     const lines = text.split("\n");
-    expect(lines[1]).toBe(`(3s) Levon says: "Lie on your back." Lip sync. Yana's mouth stays closed.`);
-    expect(lines[2]).toBe(`(10s) Levon says: "Hold! One, two, three!" Lip sync. Yana's mouth stays closed.`);
-    expect(lines[3]).toBe(`(10s) Yana says: "Three!" Lip sync. Levon's mouth stays closed.`);
+    expect(lines[1]).toBe(`[3-7s] Levon says: "Lie on your back." Lip sync. Yana's mouth stays closed.`);
+    expect(lines[2]).toBe(`[10-13s] Levon says: "Hold! One, two, three!" Lip sync. Yana's mouth stays closed.`);
+    expect(lines[3]).toBe(`[10-13s] Yana says: "Three!" Lip sync. Levon's mouth stays closed.`);
     expect(text).toContain("at the second given, in step with the action above");
   });
 
@@ -189,8 +190,8 @@ describe("describeDialogue", () => {
       ["Levon", "Yana"],
       { timeline: parseTimeline(action).segments },
     );
-    expect(text).toContain('(10s) Levon says: "Lift your legs."');
-    expect(text).toContain('(13s) Yana says: "Up!"');
+    expect(text).toContain('[10-13s] Levon says: "Lift your legs."');
+    expect(text).toContain('[13-16s] Yana says: "Up!"');
   });
 
   it("keeps a line the action doesn't quote, unstamped and in order", () => {
@@ -198,11 +199,39 @@ describe("describeDialogue", () => {
       timeline: parseTimeline("0-2s: Mila waves.").segments,
     });
     expect(text).toContain('\nMila says: "Hello!" Lip sync.');
-    expect(text).not.toContain("(0s)");
+    expect(text).not.toContain("[0-2s]");
+    expect(text).toContain("at the moment the action above says they speak");
+  });
+
+  it("stamps a line's own timing outside the quotes and wins over the action's beats", () => {
+    const text = describeDialogue(
+      [
+        { character: "Yana", line: "[4-6s] Me too!" },
+        { character: "Levon", line: "0–3 s: Let's play firefighters!" },
+      ],
+      ["Levon", "Yana"],
+      { timeline: parseTimeline("2-5s: Levon says 'Let's play firefighters!'").segments },
+    );
+    const lines = text.split("\n");
+    expect(lines[1]).toBe(`[0-3s] Levon says: "Let's play firefighters!" Lip sync. Yana's mouth stays closed.`);
+    expect(lines[2]).toBe(`[4-6s] Yana says: "Me too!" Lip sync. Levon's mouth stays closed.`);
+    expect(text).toContain("spoken word for word at the second given");
   });
 
   it("is empty when the scene has no dialogue", () => {
     expect(describeDialogue([])).toBe("");
+  });
+});
+
+describe("parseDialogueRow", () => {
+  it("reads the speaker, the optional timing in its usual spellings, and the spoken text", () => {
+    const line = "Let's play firefighters!";
+    expect(parseDialogueRow(`Levon: ${line}`)).toEqual({ speaker: "Levon", line, timing: null });
+    for (const row of [`Levon: 0-3s: ${line}`, `Levon: 0–3s: ${line}`, `Levon: 0-3 s: ${line}`, `Levon: [0-3s] ${line}`]) {
+      expect(parseDialogueRow(row)).toEqual({ speaker: "Levon", line, timing: { start: 0, end: 3 } });
+    }
+    expect(parseDialogueRow(`Levon: 1.5-3s: ${line}`)?.timing).toEqual({ start: 1.5, end: 3 });
+    expect(parseDialogueRow("no speaker")).toBeNull();
   });
 });
 
@@ -270,7 +299,7 @@ describe("buildVideoPrompt", () => {
     expect(prompt).toContain("Shot 2 [3-7s]: Levon says 'Lie on your back' and lies flat on the green mat.");
     expect(prompt).not.toContain("Good morning");
     expect(prompt).not.toMatch(/Narrator:|Voice-over:/);
-    expect(prompt).toContain(`(3s) Levon says: "Lie on your back." Lip sync. Yana's mouth stays closed.`);
+    expect(prompt).toContain(`[3-7s] Levon says: "Lie on your back." Lip sync. Yana's mouth stays closed.`);
     expect(prompt).toContain("No narrator or voice-over.");
     expect(prompt.indexOf("Shot 1")).toBeLessThan(prompt.indexOf("Dialogue, spoken word for word"));
   });

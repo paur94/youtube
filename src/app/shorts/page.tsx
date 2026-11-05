@@ -6,14 +6,14 @@ import { Suspense } from "react";
 
 import { PageHeader } from "@/components/page-header";
 import { QualitySummary, ShortStatusBadge, StandaloneBadge } from "@/components/shorts/badges";
-import { AnalyzeAllButton, ImportShortsButton, RemoveShortButton, SuggestOrderButton } from "@/components/shorts/studio-actions";
+import { AnalyzeAllButton, ImportShortsButton, MergeScenesButton, RemoveShortButton, SuggestOrderButton } from "@/components/shorts/studio-actions";
 import { Button } from "@/components/ui/button";
 import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { MODULES } from "@/lib/navigation";
 import { mediaUrl } from "@/lib/production";
 import { evaluateQuality, summarizeQuality } from "@/lib/short-qc";
-import { isShortLocked } from "@/lib/shorts";
+import { isShortLocked, scenesLabel } from "@/lib/shorts";
 import { getClaudeConfig } from "@/server/ai/claude";
 import { getFfmpegVersion } from "@/server/media/ffmpeg";
 import { shortsConsistency } from "@/server/qc/service";
@@ -59,6 +59,7 @@ async function ShortsData() {
     <>
       <PageHeader title={MODULES.shorts.label} description={MODULES.shorts.description} icon={MODULES.shorts.icon}>
         <AnalyzeAllButton ids={editable} disabled={!claude.configured} />
+        <MergeScenesButton plans={candidates} />
         <ImportShortsButton plans={candidates} />
       </PageHeader>
 
@@ -127,7 +128,7 @@ async function ShortsData() {
                           <div className="grid min-w-0 flex-1 gap-1">
                             <p className="truncate font-medium">{short.title}</p>
                             <p className="truncate text-xs text-muted-foreground">
-                              Scene {short.sceneNumber}: {short.sceneTitle}
+                              {scenesLabel(short)}: {short.sceneTitle}
                               {short.publishOrderReason && ` · ${short.publishOrderReason}`}
                             </p>
                             <div className="flex flex-wrap items-center gap-1.5">
@@ -195,7 +196,7 @@ async function ShortsData() {
             </CardHeader>
             <CardContent>
               <ol className="grid list-decimal gap-1.5 pl-4 text-sm text-muted-foreground">
-                <li>Import approved scene videos: one Short per scene.</li>
+                <li>Import approved scene videos (one Short per scene), or merge several scenes of a story into one longer Short.</li>
                 <li>Analyse with Claude: standalone strength, hook, metadata.</li>
                 <li>Check framing and captions in the live preview, then render 9:16.</li>
                 <li>Fix quality checks, approve the metadata, then approve the Short.</li>

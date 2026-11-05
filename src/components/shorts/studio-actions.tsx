@@ -1,6 +1,6 @@
 "use client";
 
-import { ImportIcon, ListOrderedIcon, SparklesIcon, Trash2Icon } from "lucide-react";
+import { CombineIcon, ImportIcon, ListOrderedIcon, SparklesIcon, Trash2Icon } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { toast } from "sonner";
@@ -18,7 +18,9 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { analyzeShort, deleteShort, importShorts, suggestPublishOrder } from "@/server/actions/shorts";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { MERGE_MAX_SCENES, SHORT_COMFORT_SECONDS, SHORT_MAX_SECONDS } from "@/lib/shorts";
+import { analyzeShort, deleteShort, importShorts, mergeScenesIntoShort, suggestPublishOrder } from "@/server/actions/shorts";
 
 type Candidate = { id: string; title: string; scenes: { sceneId: string; position: number; title: string; durationSeconds: string | null; shortId: string | null }[] };
 
@@ -105,6 +107,114 @@ export function ImportShortsButton({ plans }: { plans: Candidate[] }) {
             </Button>
             <Button disabled={pending || selected.size === 0} onClick={() => run(() => importShorts([...selected]), () => setOpen(false))}>
               {pending ? "Importing…" : `Create ${selected.size} Short${selected.size === 1 ? "" : "s"}`}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
+  );
+}
+
+/** Joins several scenes of one story into a single longer Short. */
+export function MergeScenesButton({ plans }: { plans: Candidate[] }) {
+  const mergeable = plans.filter((p) => p.scenes.length >= 2);
+  const [open, setOpen] = useState(false);
+  const [planId, setPlanId] = useState(mergeable[0]?.id ?? "");
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [pending, run] = useAction();
+  const plan = mergeable.find((p) => p.id === planId) ?? mergeable[0];
+  const chosen = plan?.scenes.filter((s) => selected.has(s.sceneId)) ?? [];
+  const total = chosen.reduce((sum, s) => sum + Number(s.durationSeconds ?? 0), 0);
+  const tooLong = total > SHORT_MAX_SECONDS;
+  const tooMany = chosen.length > MERGE_MAX_SCENES;
+
+  function toggle(id: string, on: boolean) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (on) next.add(id);
+      else next.delete(id);
+      return next;
+    });
+  }
+
+  return (
+    <>
+      <Button
+        variant="outline"
+        onClick={() => {
+          setSelected(new Set());
+          setOpen(true);
+        }}
+        disabled={mergeable.length === 0}
+        title={mergeable.length ? undefined : "A story needs at least two approved scene videos"}
+      >
+        <CombineIcon />
+        Merge scenes
+      </Button>
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Merge scenes into one Short</DialogTitle>
+            <DialogDescription>
+              Joins the chosen scenes of one story back to back, in story order, into a single longer Short (up to{" "}
+              {SHORT_MAX_SECONDS / 60} minutes). Scenes can also keep Shorts of their own. The original clips are never changed.
+            </DialogDescription>
+          </DialogHeader>
+          {mergeable.length > 1 && (
+            <Select
+              value={plan?.id}
+              onValueChange={(id) => {
+                setPlanId(id);
+                setSelected(new Set());
+              }}
+            >
+              <SelectTrigger className="w-full">
+                <SelectValue placeholder="Choose a story" />
+              </SelectTrigger>
+              <SelectContent>
+                {mergeable.map((p) => (
+                  <SelectItem key={p.id} value={p.id}>
+                    {p.title}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
+          {plan && (
+            <div className="grid max-h-96 gap-1.5 overflow-y-auto">
+              {mergeable.length === 1 && <p className="text-sm font-medium">{plan.title}</p>}
+              {plan.scenes.map((s) => (
+                <label key={s.sceneId} className="flex items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={selected.has(s.sceneId)}
+                    onChange={(e) => toggle(s.sceneId, e.target.checked)}
+                    className="size-3.5 accent-primary"
+                  />
+                  <span className="text-muted-foreground tabular-nums">{s.position + 1}.</span>
+                  <span>{s.title}</span>
+                  <span className="ml-auto text-xs text-muted-foreground">
+                    {s.durationSeconds ? `${Number(s.durationSeconds)}s` : ""}
+                  </span>
+                </label>
+              ))}
+            </div>
+          )}
+          <p className={`text-xs ${tooLong || tooMany ? "text-destructive" : "text-muted-foreground"}`}>
+            {chosen.length} scene{chosen.length === 1 ? "" : "s"} · about {Math.round(total)}s
+            {tooLong && ` · over the ${SHORT_MAX_SECONDS}s Shorts limit`}
+            {tooMany && ` · at most ${MERGE_MAX_SCENES} scenes`}
+            {!tooLong && total > SHORT_COMFORT_SECONDS && ` · longer than ${SHORT_COMFORT_SECONDS}s, so viewers may swipe away sooner`}
+          </p>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              disabled={pending || chosen.length < 2 || tooLong || tooMany}
+              onClick={() => run(() => mergeScenesIntoShort(chosen.map((s) => s.sceneId)), () => setOpen(false))}
+            >
+              {pending ? "Joining clips…" : `Merge ${chosen.length} scenes`}
             </Button>
           </DialogFooter>
         </DialogContent>

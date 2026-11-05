@@ -27,6 +27,7 @@ import {
   type VisionReport,
   visionStatus,
 } from "@/lib/story-qc";
+import type { ShortPart } from "@/lib/shorts";
 import { buildPreflightPrompt, buildVisionText, VISION_SYSTEM_PROMPT } from "@/server/ai/qc-prompt";
 import { getClaudeClient, getClaudeConfig, NOT_CONFIGURED_MESSAGE, runStructuredGeneration, type StructuredResult } from "@/server/ai/claude";
 import { downscaleImage, extractFrames, FfmpegError, getFfmpegVersion, probeMedia } from "@/server/media/ffmpeg";
@@ -540,10 +541,17 @@ export async function regenerateFailedScenes(
   return { ok: submitted > 0, message };
 }
 
-type ShortRef = { id: string; sceneId: string | null; sourceAssetId: string | null; sceneNumber: number };
+type ShortRef = { id: string; sceneId: string | null; sourceAssetId: string | null; sceneNumber: number; parts: ShortPart[] | null };
+
+/** The clip(s) a Short is made of: one scene, or every part of a merged Short. */
+function shortItems(short: Omit<ShortRef, "id">): ConsistencyItem[] {
+  return short.parts?.length
+    ? short.parts.map((p) => ({ sceneId: p.sceneId, assetId: p.assetId, label: `Scene ${p.sceneNumber}` }))
+    : [{ sceneId: short.sceneId, assetId: short.sourceAssetId, label: `Scene ${short.sceneNumber}` }];
+}
 
 export function shortConsistency(short: Omit<ShortRef, "id">, plans?: Map<string, ReturnType<typeof loadPlanQc>>) {
-  return evaluateConsistency([{ sceneId: short.sceneId, assetId: short.sourceAssetId, label: `Scene ${short.sceneNumber}` }], plans);
+  return evaluateConsistency(shortItems(short), plans);
 }
 
 /** Consistency of many Shorts (list pages), loading each plan once. */
@@ -584,7 +592,7 @@ export async function acceptCriticalIssues(items: ConsistencyItem[]) {
 }
 
 export function acceptShortCriticalIssues(short: Omit<ShortRef, "id">) {
-  return acceptCriticalIssues([{ sceneId: short.sceneId, assetId: short.sourceAssetId, label: `Scene ${short.sceneNumber}` }]);
+  return acceptCriticalIssues(shortItems(short));
 }
 
 export function acceptVideoCriticalIssues(video: { clips: { sceneId: string | null; assetId: string; sceneNumber: number }[] }) {

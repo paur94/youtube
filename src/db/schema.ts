@@ -36,7 +36,7 @@ import {
 import { type EditSettings, VIDEO_STATUSES, type VideoClip } from "../lib/long-video";
 import type { AudioLevels, MediaProbe } from "../lib/short-video";
 import type { PlanContinuity, SceneContinuity } from "../lib/story-qc";
-import { type CaptionCue, SHORT_STATUSES, type ShortAnalysis, type TrafficSource, type VideoSettings } from "../lib/shorts";
+import { type CaptionCue, SHORT_STATUSES, type ShortAnalysis, type ShortPart, type TrafficSource, type VideoSettings } from "../lib/shorts";
 import { REVISION_SOURCES, STORY_STATUSES, type StoryContent, type StoryScene } from "../lib/stories";
 import { TIKTOK_POST_STATES } from "../lib/tiktok";
 
@@ -366,6 +366,9 @@ export const shorts = pgTable(
     sceneNumber: integer().notNull(),
     sourceFilePath: text(),
     sourceProbe: jsonb().$type<MediaProbe>(),
+    // Set for a Short that joins several scenes of one story (sceneId is then null); sourceFilePath
+    // is the joined clip.
+    parts: jsonb().$type<ShortPart[]>(),
     status: shortStatus().notNull().default("draft"),
     title: text().notNull(),
     description: text().notNull().default(""),

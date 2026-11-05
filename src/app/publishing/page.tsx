@@ -16,7 +16,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { computeTimeline, formatTimestamp, uploadDescription } from "@/lib/long-video";
 import { MODULES } from "@/lib/navigation";
 import { mediaUrl } from "@/lib/production";
-import { buildYouTubeMetadata, isOverdue, SHORT_STATUS_LABELS, SHORT_STATUSES } from "@/lib/shorts";
+import { buildYouTubeMetadata, isOverdue, scenesLabel, SHORT_STATUS_LABELS, SHORT_STATUSES } from "@/lib/shorts";
 import { getTikTokConfig } from "@/server/providers/tiktok";
 import { getYouTubeConfig } from "@/server/providers/youtube";
 import { getPublishingQueue, getShortStatusCounts, isRenderCurrent } from "@/server/queries/shorts";
@@ -292,7 +292,7 @@ async function QueueData() {
                           {short.title}
                         </Link>
                         <p className="truncate text-xs text-muted-foreground">
-                          {planTitle ?? "Plan deleted"} · scene {short.sceneNumber}
+                          {planTitle ?? "Plan deleted"} · {scenesLabel(short).toLowerCase()}
                           {short.playlist && ` · ${short.playlist}`}
                         </p>
                         {short.status === "failed" && short.publishError && (

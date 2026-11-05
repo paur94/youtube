@@ -1,5 +1,5 @@
 import { AGE_GROUP_LABELS, type AGE_GROUPS } from "@/lib/ideas";
-import { STANDALONE_LABELS, type ShortAnalysis } from "@/lib/shorts";
+import { scenesLabel, STANDALONE_LABELS, type ShortAnalysis, type ShortPart } from "@/lib/shorts";
 import type { StoryScene } from "@/lib/stories";
 
 // Kept byte-stable (no dates or ids) so it can be prompt-cached later without changes.
@@ -43,6 +43,8 @@ export type ShortPromptInput = {
     durationSeconds: number | null;
     soundEffects: string[];
     musicMood: string;
+    /** Set when the Short joins several consecutive scenes into one clip; the fields above then describe all of them. */
+    mergedNumbers?: number[];
   };
   previousScene: string | null;
   nextScene: string | null;
@@ -50,11 +52,17 @@ export type ShortPromptInput = {
 
 export function buildShortAnalysisPrompt(input: ShortPromptInput) {
   const { story, scene } = input;
+  const merged = scene.mergedNumbers && scene.mergedNumbers.length > 1 ? scene.mergedNumbers : null;
   const lines = [
     story
       ? `<story>\nTitle: ${story.title}\nTarget age: ${AGE_GROUP_LABELS[story.ageGroup]}\nLanguage: ${story.language}\nPremise: ${story.premise}\nLearning outcome: ${story.learningOutcome}\n</story>`
       : "<story>Unknown: the original story was deleted. Judge the scene on its own.</story>",
-    `<scene number="${scene.number}" of="${scene.total}">`,
+    ...(merged
+      ? [
+          `This Short joins scenes ${merged.join(", ")} back to back into one clip. Treat them as one longer scene: judge the arc across all of them.`,
+          `<scene numbers="${merged.join(",")}" of="${scene.total}">`,
+        ]
+      : [`<scene number="${scene.number}" of="${scene.total}">`]),
     `Title: ${scene.title}`,
     `Clip length: ${scene.durationSeconds === null ? "unknown" : `${scene.durationSeconds} seconds`}`,
     `Setting: ${scene.setting || "(none)"}`,
@@ -77,13 +85,13 @@ export const ORDER_SYSTEM_PROMPT = `You plan the release order of YouTube Shorts
 
 export function buildPublishOrderPrompt(
   storyTitle: string | null,
-  items: { number: number; sceneNumber: number; title: string; analysis: ShortAnalysis | null }[],
+  items: { number: number; sceneNumber: number; title: string; analysis: ShortAnalysis | null; parts?: ShortPart[] | null }[],
 ) {
   const list = items
     .map((item) => {
       const a = item.analysis;
       const verdict = a ? `${STANDALONE_LABELS[a.standalone.verdict]}; opening ${a.opening.strength}; ${a.standalone.reasons.join(" ")}` : "Not analysed yet";
-      return `Short ${item.number}: scene ${item.sceneNumber} "${item.title}". ${verdict}`;
+      return `Short ${item.number}: ${scenesLabel({ sceneNumber: item.sceneNumber, parts: item.parts ?? null }).toLowerCase()} "${item.title}". ${verdict}`;
     })
     .join("\n");
   return {

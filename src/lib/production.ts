@@ -337,7 +337,23 @@ function sentences(text: string) {
     .filter(Boolean);
 }
 
-type Turn = { speaker: string; line: string; at: number | null };
+type Turn = { speaker: string; line: string; at: { start: number; end: number } | null };
+
+// A Dialogue row: "Name: line" or "Name: 0-3s: line" (also "0–3s", "0-3 s", "[0-3s]").
+const DIALOGUE_ROW_RE = /^\s*([^:]+):\s*(?:\[?(\d+(?:\.\d+)?)\s*[-–]\s*(\d+(?:\.\d+)?)\s*s\]?\s*:?\s*)?(.+)$/;
+
+/** Splits a dialogue row into speaker, optional timing and the spoken text, which never includes the timing. */
+export function parseDialogueRow(row: string) {
+  const m = DIALOGUE_ROW_RE.exec(row);
+  if (!m) return null;
+  const start = m[2] === undefined ? NaN : Number(m[2]);
+  const end = m[3] === undefined ? NaN : Number(m[3]);
+  return {
+    speaker: m[1].trim(),
+    line: m[4].trim(),
+    timing: Number.isFinite(start) && Number.isFinite(end) && end > start ? { start, end } : null,
+  };
+}
 
 /** Rough length of a line spoken at a lively children's-TV pace. */
 function speechSeconds(text: string) {
@@ -356,9 +372,9 @@ export function stripNarration(text: string) {
  * The characters' spoken lines for video models that generate their own sound, in the syntax
  * Alibaba's Wan 3.0 prompt guide documents (`Name says: "line"`, "Lip sync"). There is no voice-over:
  * lines without a speaker are left out. Each line names who stays silent, because models tend to move
- * the listener's mouth too. With a timed action (see parseTimeline) every line that the action quotes
- * is stamped with the second its beat starts, so speech and movement line up and the lines aren't
- * spread evenly over the clip. `onScreen` adds characters who are in the shot but have no lines.
+ * the listener's mouth too. A line written as "Name: 0-3s: line" is stamped [0-3s] outside the quotes;
+ * otherwise, with a timed action (see parseTimeline), a line the action quotes is stamped with its
+ * beat, so speech and movement line up and the lines aren't spread evenly over the clip. `onScreen` adds characters who are in the shot but have no lines.
  */
 export function describeDialogue(
   lines: StoryScene["dialogue"],
@@ -366,7 +382,8 @@ export function describeDialogue(
   options: { timeline?: ActionSegment[] } = {},
 ) {
   const spoken = lines
-    .map((d) => ({ speaker: d.character.trim(), line: d.line.trim() }))
+    .map((d) => parseDialogueRow(`${d.character.trim()}: ${d.line.trim()}`))
+    .filter((d) => d !== null)
     .filter((d) => d.line && d.speaker && d.speaker.toLowerCase() !== NARRATOR.toLowerCase());
   if (!spoken.length) return "";
   const present = [...new Set([...onScreen.map((n) => n.trim()), ...spoken.map((d) => d.speaker)].filter(Boolean))];
@@ -376,14 +393,19 @@ export function describeDialogue(
     segments,
     spoken.map((s) => s.line),
   );
-  // Stable by start time; lines the action doesn't quote keep their list order at the end.
+  // A line's own timing wins over the beat that quotes it. Stable by start time; untimed lines keep
+  // their list order at the end.
   const turns: Turn[] = spoken
-    .map((s, index) => ({ turn: { ...s, at: placed[index]?.start ?? null }, index }))
-    .sort((a, b) => (a.turn.at ?? Infinity) - (b.turn.at ?? Infinity) || a.index - b.index)
+    .map(({ speaker, line, timing }, index) => {
+      const beat = placed[index];
+      return { turn: { speaker, line, at: timing ?? (beat ? { start: beat.start, end: beat.end } : null) }, index };
+    })
+    .sort((a, b) => (a.turn.at?.start ?? Infinity) - (b.turn.at?.start ?? Infinity) || a.index - b.index)
     .map((t) => t.turn);
+  const timed = turns.some((t) => t.at);
 
   const rendered = turns.map(({ speaker, line, at }) => {
-    const stamp = at === null ? "" : `(${at}s) `;
+    const stamp = at === null ? "" : `[${at.start}-${at.end}s] `;
     const listeners = present.filter((n) => n !== speaker);
     const silent = listeners.length
       ? listeners.length > 1
@@ -396,7 +418,9 @@ export function describeDialogue(
   const total = Math.round(turns.reduce((sum, t) => sum + speechSeconds(t.line), 0));
   const header =
     "Dialogue, spoken word for word" +
-    (segments.length ? " at the second given, in step with the action above" : ", in this order") +
+    (timed
+      ? " at the second given, in step with the action above"
+      : ", in this order, at the moment the action above says they speak") +
     `. Natural, lively children's-TV pace, about ${Math.max(total, 1)} seconds of speech in total: each line takes only as long as its words need and is never slowed or stretched; between lines nobody speaks. ` +
     "Only one character speaks at a time and only the speaker's lips move:";
   return `${header}\n${rendered.join("\n")}\nNo other dialogue. No narrator or voice-over. No background music.`;

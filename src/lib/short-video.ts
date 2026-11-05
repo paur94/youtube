@@ -129,6 +129,70 @@ export function buildRenderArgs(input: {
   ];
 }
 
+/**
+ * Joins scene clips back to back (hard cuts) into one source for a merged Short. Every clip is
+ * fitted into the first clip's frame size and padded to its exact length, so caption offsets
+ * computed from the probed lengths stay in sync. Encoded near-losslessly: the vertical render
+ * encodes it again.
+ */
+export function buildJoinArgs(input: {
+  clips: { inputPath: string; durationSeconds: number; hasAudio: boolean }[];
+  width: number;
+  height: number;
+  fps: number;
+  outputPath: string;
+}) {
+  if (input.clips.length < 2) throw new Error("Join at least two clips");
+  const w = even(input.width);
+  const h = even(input.height);
+  const args = ["-hide_banner", "-nostdin", "-y"];
+  const graph: string[] = [];
+  let next = 0;
+  input.clips.forEach((clip, i) => {
+    const length = clip.durationSeconds;
+    const video = next++;
+    args.push("-t", String(length), "-i", clip.inputPath);
+    let audio = `${video}:a:0`;
+    if (!clip.hasAudio) {
+      audio = `${next++}:a`;
+      args.push("-f", "lavfi", "-t", String(length), "-i", "anullsrc=r=48000:cl=stereo");
+    }
+    graph.push(
+      `[${video}:v]scale=${w}:${h}:force_original_aspect_ratio=decrease:flags=lanczos,pad=${w}:${h}:(ow-iw)/2:(oh-ih)/2:color=black,` +
+        `setsar=1,fps=${input.fps},format=yuv420p,tpad=stop_mode=clone:stop_duration=1,trim=duration=${length},setpts=PTS-STARTPTS[v${i}]`,
+      `[${audio}]aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo,` +
+        `apad=whole_dur=${length},atrim=duration=${length},asetpts=PTS-STARTPTS[a${i}]`,
+    );
+  });
+  graph.push(`${input.clips.map((_, i) => `[v${i}][a${i}]`).join("")}concat=n=${input.clips.length}:v=1:a=1[v][a]`);
+  args.push(
+    "-filter_complex",
+    graph.join(";"),
+    "-map",
+    "[v]",
+    "-map",
+    "[a]",
+    "-c:v",
+    "libx264",
+    "-preset",
+    "medium",
+    "-crf",
+    "14",
+    "-r",
+    String(input.fps),
+    "-c:a",
+    "aac",
+    "-b:a",
+    "256k",
+    "-ar",
+    "48000",
+    "-movflags",
+    "+faststart",
+    input.outputPath,
+  );
+  return args;
+}
+
 // ---------- Burned-in captions and hook (ASS subtitles) ----------
 
 export function assTime(seconds: number) {

@@ -20,7 +20,7 @@ import { MODULES } from "@/lib/navigation";
 import { mediaUrl } from "@/lib/production";
 import { approvalBlockers, evaluateQuality, summarizeQuality } from "@/lib/short-qc";
 import { aspectLabel } from "@/lib/short-video";
-import { formatCaptionLines, isShortLocked } from "@/lib/shorts";
+import { formatCaptionLines, isShortLocked, scenesLabel } from "@/lib/shorts";
 import { getClaudeConfig } from "@/server/ai/claude";
 import { getFfmpegVersion } from "@/server/media/ffmpeg";
 import { getShortStoryQc, shortConsistency } from "@/server/qc/service";
@@ -63,7 +63,7 @@ async function ShortData({ params }: Pick<PageProps<"/shorts/[id]">, "params">) 
   const locked = isShortLocked(short);
   const [consistency, storyQc] = await Promise.all([shortConsistency(short), getShortStoryQc(short)]);
   const checks = evaluateQuality({
-    ...buildQualityInput(short, { ffmpegAvailable: Boolean(ffmpeg), hasDialogue: (short.scene?.dialogue.length ?? 0) > 0 }),
+    ...buildQualityInput(short, { ffmpegAvailable: Boolean(ffmpeg), hasDialogue: [short.scene, ...short.partScenes].some((s) => (s?.dialogue.length ?? 0) > 0) }),
     consistency,
   });
   const quality = summarizeQuality(checks);
@@ -77,7 +77,7 @@ async function ShortData({ params }: Pick<PageProps<"/shorts/[id]">, "params">) 
 
   return (
     <>
-      <PageHeader title={short.title} description={`Scene ${short.sceneNumber} of ${short.plan?.title ?? "a deleted plan"}: ${short.sceneTitle}`}>
+      <PageHeader title={short.title} description={`${scenesLabel(short)} of ${short.plan?.title ?? "a deleted plan"}: ${short.sceneTitle}`}>
         <ShortStatusBadge status={short.status} />
         {a && <StandaloneBadge verdict={a.standalone.verdict} />}
         {planHref && short.scene && (
@@ -94,7 +94,9 @@ async function ShortData({ params }: Pick<PageProps<"/shorts/[id]">, "params">) 
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-sm">
           <p className="flex items-start gap-2">
             <TriangleAlertIcon className="mt-0.5 size-4 shrink-0 text-amber-400" />
-            The scene&apos;s final clip was replaced in the Production Studio after this Short was imported.
+            {short.parts?.length
+              ? "A merged scene's final clip was replaced in the Production Studio after this Short was made."
+              : "The scene's final clip was replaced in the Production Studio after this Short was imported."}
           </p>
           <UseCurrentClipButton shortId={short.id} />
         </div>
