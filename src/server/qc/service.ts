@@ -24,6 +24,7 @@ import {
   stripCorrections,
   toQcIssues,
   visionResultSchema,
+  toQcScene,
   type VisionReport,
   visionStatus,
 } from "@/lib/story-qc";
@@ -89,20 +90,15 @@ export async function loadPlanQc(planId: string) {
       : [],
   );
 
-  const qcScenes: QcScene[] = scenes.map((scene, i) => ({
-    id: scene.id,
-    number: i + 1,
-    title: scene.title,
-    setting: scene.setting,
-    action: scene.action,
-    narration: scene.narration,
-    dialogue: scene.dialogue,
-    visualPrompt: scene.visualPrompt,
-    durationSeconds: scene.durationSeconds,
-    characters: links
-      .filter((l) => l.sceneId === scene.id)
-      .map((l) => ({ name: l.name, visualDescription: l.visualDescription, hasReference: withReference.has(l.id) })),
-  }));
+  const qcScenes: QcScene[] = scenes.map((scene, i) =>
+    toQcScene(
+      scene,
+      i + 1,
+      links
+        .filter((l) => l.sceneId === scene.id)
+        .map((l) => ({ name: l.name, visualDescription: l.visualDescription, hasReference: withReference.has(l.id) })),
+    ),
+  );
   const rules = checkPlanRules(qcScenes);
   const rows: SceneQc[] = scenes.map((scene, i) => {
     const continuity = readSceneContinuity(scene.continuity);

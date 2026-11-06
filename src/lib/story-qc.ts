@@ -196,6 +196,29 @@ export type QcScene = {
   characters: QcCharacter[];
 };
 
+/**
+ * The script fields the checks read, picked from a production scene. Nothing else on the scene
+ * (notes, text overlays added in post) reaches a QC prompt.
+ */
+export function toQcScene(
+  scene: Omit<QcScene, "number" | "characters">,
+  number: number,
+  characters: QcCharacter[],
+): QcScene {
+  return {
+    id: scene.id,
+    number,
+    title: scene.title,
+    setting: scene.setting,
+    action: scene.action,
+    narration: scene.narration,
+    dialogue: scene.dialogue,
+    visualPrompt: scene.visualPrompt,
+    durationSeconds: scene.durationSeconds,
+    characters,
+  };
+}
+
 /** FNV-1a: small, synchronous, and the same in the browser and on the server. */
 export function hashText(text: string) {
   let h = 0x811c9dc5;

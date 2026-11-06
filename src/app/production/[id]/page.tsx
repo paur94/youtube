@@ -255,6 +255,7 @@ async function PlanData({ params }: Pick<PageProps<"/production/[id]">, "params"
                   imageModel: plan.imageModel,
                   videoModel: plan.videoModel,
                   visualStyle: plan.visualStyle,
+                  clipMusic: plan.clipMusic,
                 }}
               />
             </CardContent>

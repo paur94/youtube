@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import type { SceneOverlay } from "./overlays";
 import { findPromptConcerns } from "./production";
 import type { StoryScene } from "./stories";
 
@@ -124,6 +125,8 @@ export function renderKey(input: {
   captions: CaptionCue[];
   hook: string;
   hookSeconds: number;
+  /** The scenes' text overlays on the Short's timeline. */
+  overlays?: SceneOverlay[];
 }) {
   const s = input.settings;
   return JSON.stringify({
@@ -134,6 +137,8 @@ export function renderKey(input: {
     normalizeAudio: s.normalizeAudio,
     captions: s.burnCaptions ? input.captions : null,
     hook: s.showHook && input.hook.trim() ? [input.hook.trim(), input.hookSeconds] : null,
+    // Left out when there are none so renders made before overlays existed stay current.
+    ...(input.overlays?.length ? { overlays: input.overlays } : {}),
   });
 }
 

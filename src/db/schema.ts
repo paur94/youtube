@@ -34,6 +34,7 @@ import {
   SCENE_STATUSES,
 } from "../lib/production";
 import { type EditSettings, VIDEO_STATUSES, type VideoClip } from "../lib/long-video";
+import type { SceneOverlay } from "../lib/overlays";
 import type { AudioLevels, MediaProbe } from "../lib/short-video";
 import type { PlanContinuity, SceneContinuity } from "../lib/story-qc";
 import { type CaptionCue, SHORT_STATUSES, type ShortAnalysis, type ShortPart, type TrafficSource, type VideoSettings } from "../lib/shorts";
@@ -214,6 +215,8 @@ export const productionPlans = pgTable(
     aspectRatio: text().notNull().default("16:9"),
     imageModel: text().notNull(),
     videoModel: text().notNull(),
+    // "none" keeps generated clips free of music; "music_mood" asks for the story's music mood.
+    clipMusic: text().notNull().default("none"),
     // Story revision the scenes were imported from.
     sourceRevision: integer(),
     // Continuity bible (characters, props, places) from the last story QC run.
@@ -247,6 +250,8 @@ export const productionScenes = pgTable(
     // Character names from the story that didn't match a library character.
     unmatchedCharacters: text().array().notNull().default([]),
     notes: text().notNull().default(""),
+    // Chat bubbles and captions burned in during Final assembly; never sent to image or video models.
+    overlays: jsonb().$type<SceneOverlay[]>().notNull().default([]),
     status: sceneStatus().notNull().default("ready"),
     error: text(),
     selectedAssetId: uuid().references((): AnyPgColumn => assets.id, { onDelete: "set null" }),

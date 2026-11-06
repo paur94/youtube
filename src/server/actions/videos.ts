@@ -29,6 +29,7 @@ import {
   videoRenderKey,
   type VideoStatus,
 } from "@/lib/long-video";
+import { readOverlays, type SceneOverlay } from "@/lib/overlays";
 import { buildCaptionsFromDialogue, buildYouTubeMetadata, isPublishable, normalizeHashtags, parseCaptionLines, TITLE_MAX } from "@/lib/shorts";
 import { getClaudeClient, getClaudeConfig, NOT_CONFIGURED_MESSAGE, runStructuredGeneration } from "@/server/ai/claude";
 import { buildVideoMetadataPrompt } from "@/server/ai/video-prompt";
@@ -83,6 +84,7 @@ type SceneClipRow = {
   position: number;
   title: string;
   dialogue: { character: string; line: string }[];
+  overlays: SceneOverlay[];
   assetId: string;
   filePath: string;
   durationSeconds: string | null;
@@ -95,6 +97,7 @@ async function loadSceneClips(where: { planId?: string; assetIds?: string[] }): 
       position: productionScenes.position,
       title: productionScenes.title,
       dialogue: productionScenes.dialogue,
+      overlays: productionScenes.overlays,
       assetId: assets.id,
       filePath: assets.filePath,
       durationSeconds: assets.durationSeconds,
@@ -139,7 +142,20 @@ async function snapshotClip(row: SceneClipRow, ffmpeg: boolean): Promise<VideoCl
     trimStart: 0,
     trimEnd: null,
     captions: short?.captions ?? buildCaptionsFromDialogue(row.dialogue, sourceSeconds),
+    overlays: readOverlays(row.overlays),
   };
+}
+
+/** Clips with their scenes' current text overlays, which may have been edited since they were added. */
+async function withCurrentOverlays(clips: VideoClip[]) {
+  const sceneIds = [...new Set(clips.map((c) => c.sceneId).filter((s): s is string => Boolean(s)))];
+  if (!sceneIds.length) return clips;
+  const rows = await db
+    .select({ id: productionScenes.id, overlays: productionScenes.overlays })
+    .from(productionScenes)
+    .where(inArray(productionScenes.id, sceneIds));
+  const current = new Map(rows.map((r) => [r.id, readOverlays(r.overlays)]));
+  return clips.map((c) => (c.sceneId && current.has(c.sceneId) ? { ...c, overlays: current.get(c.sceneId) } : c));
 }
 
 export type CreateVideoResult = ActionResult & { id?: string };
@@ -307,7 +323,7 @@ export async function renderVideo(id: string): Promise<ActionResult> {
 
     // Clips measured before FFmpeg was installed need their size, frame rate and sound track.
     const clips = await Promise.all(
-      video.clips.map(async (c) => {
+      (await withCurrentOverlays(video.clips)).map(async (c) => {
         if (c.width && c.sourceSeconds) return c;
         const probe = await probeMedia(c.filePath);
         if (!probe.width || !probe.durationSeconds) throw new FfmpegError(`Scene ${c.sceneNumber}'s clip has no readable video stream`);

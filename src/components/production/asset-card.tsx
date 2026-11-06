@@ -28,6 +28,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { InspectAssetButton } from "@/components/qc/qc-actions";
 import { IssueCounts, QcIssueList } from "@/components/qc/qc-issue-list";
 import { VisionBadge } from "@/components/qc/vision-badge";
+import type { SceneOverlay } from "@/lib/overlays";
 import { ASSET_SOURCE_LABELS, type AssetKind, type AssetSource, type AssetStatus } from "@/lib/production";
 import type { QcIssue, VisionStatus } from "@/lib/story-qc";
 import {
@@ -83,12 +84,15 @@ export function AssetCard({
   isFinal,
   showSelect = true,
   canInspect = false,
+  overlays,
 }: {
   asset: AssetItem;
   isFinal: boolean;
   showSelect?: boolean;
   /** Claude is configured, so the vision check can run. */
   canInspect?: boolean;
+  /** The scene's text overlays, previewed over a clip. */
+  overlays?: SceneOverlay[];
 }) {
   const [confirmed, setConfirmed] = useState(false);
   const [notes, setNotes] = useState("");
@@ -96,7 +100,7 @@ export function AssetCard({
 
   return (
     <article className="grid content-start gap-2 rounded-lg border bg-background/40 p-2.5">
-      <AssetPreview kind={asset.kind} filePath={asset.filePath} sourceUrl={asset.sourceUrl} />
+      <AssetPreview kind={asset.kind} filePath={asset.filePath} sourceUrl={asset.sourceUrl} overlays={overlays} />
       <div className="flex flex-wrap items-center gap-1.5">
         <AssetStatusBadge status={asset.status} />
         <ModeBadge mode={asset.source === "manual_import" ? "manual" : "api"} />

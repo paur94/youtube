@@ -1,7 +1,10 @@
 import { FileWarningIcon } from "lucide-react";
 
+import type { SceneOverlay } from "@/lib/overlays";
 import { type AssetKind, mediaUrl } from "@/lib/production";
 import { cn } from "@/lib/utils";
+
+import { OverlayVideo } from "./overlay-preview";
 
 /** Local file when stored, otherwise the provider URL (which may have expired). */
 export function AssetPreview({
@@ -10,12 +13,15 @@ export function AssetPreview({
   sourceUrl,
   className,
   controls = true,
+  overlays,
 }: {
   kind: AssetKind;
   filePath: string | null;
   sourceUrl?: string | null;
   className?: string;
   controls?: boolean;
+  /** Scene text overlays, drawn over a video as they will be burned in. */
+  overlays?: SceneOverlay[];
 }) {
   const src = filePath ? mediaUrl(filePath) : sourceUrl;
   const box = cn("aspect-video w-full overflow-hidden rounded-md border bg-black/40", className);
@@ -26,6 +32,9 @@ export function AssetPreview({
         File not available
       </div>
     );
+  }
+  if (kind === "video" && overlays?.length) {
+    return <OverlayVideo src={src} overlays={overlays} className={cn(box, "object-contain")} controls={controls} />;
   }
   if (kind === "video") {
     return (

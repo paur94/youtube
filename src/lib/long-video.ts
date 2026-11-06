@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import type { SceneOverlay } from "./overlays";
 import type { CheckStatus } from "./short-qc";
 import { assTime, type AudioLevels, escapeAssText, LOUDNESS_TARGET_LUFS, type MediaProbe } from "./short-video";
 import {
@@ -48,6 +49,8 @@ export type VideoClip = {
   trimEnd: number | null;
   /** Timed against the source clip, so reordering and trimming never shifts them. */
   captions: CaptionCue[];
+  /** The scene's text overlays, timed against the source clip and burned into it before joining. */
+  overlays?: SceneOverlay[];
 };
 
 export const TRANSITIONS = ["cut", "crossfade", "dip"] as const;
@@ -164,7 +167,8 @@ export function pickFps(clips: Pick<VideoClip, "fps">[]) {
 /** Everything that changes the rendered file; a render is stale when its key differs. */
 export function videoRenderKey(clips: VideoClip[], settings: EditSettings) {
   return JSON.stringify({
-    clips: clips.map((c) => [c.filePath, c.trimStart, c.trimEnd, settings.burnCaptions ? c.captions : null]),
+    // Overlays are left out when there are none so renders made before they existed stay current.
+    clips: clips.map((c) => [c.filePath, c.trimStart, c.trimEnd, settings.burnCaptions ? c.captions : null, ...(c.overlays?.length ? [c.overlays] : [])]),
     transition: settings.transition === "cut" ? "cut" : [settings.transition, settings.transitionSeconds],
     background: settings.background,
     fade: settings.fadeInOut,

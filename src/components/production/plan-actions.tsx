@@ -44,7 +44,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { HIGGSFIELD_MODELS } from "@/lib/higgsfield";
-import { ASPECT_RATIOS } from "@/lib/production";
+import { ASPECT_RATIOS, CLIP_MUSIC_LABELS, CLIP_MUSIC_MODES } from "@/lib/production";
 import {
   addScene,
   createProductionPlan,
@@ -222,14 +222,14 @@ export function PlanSettings({
   settings,
 }: {
   planId: string;
-  settings: { aspectRatio: string; imageModel: string; videoModel: string; visualStyle: string };
+  settings: { aspectRatio: string; imageModel: string; videoModel: string; visualStyle: string; clipMusic: string };
 }) {
   const [values, setValues] = useState(settings);
   const [pending, run] = useAction();
   const id = useId();
   const dirty = JSON.stringify(values) !== JSON.stringify(settings);
 
-  const select = (key: "aspectRatio" | "imageModel" | "videoModel", label: string, options: [string, string][]) => (
+  const select = (key: "aspectRatio" | "imageModel" | "videoModel" | "clipMusic", label: string, options: [string, string][]) => (
     <div className="grid min-w-0 gap-1.5">
       <Label htmlFor={`${id}-${key}`}>{label}</Label>
       <Select value={values[key]} onValueChange={(v) => setValues({ ...values, [key]: v })}>
@@ -270,6 +270,13 @@ export function PlanSettings({
           placeholder="e.g. Soft 3D animation, pastel colours"
         />
         <p className="text-xs text-muted-foreground">Added to prompts that don&apos;t already mention it.</p>
+      </div>
+      <div className="grid min-w-0 gap-1.5">
+        {select("clipMusic", "Music in generated clips", CLIP_MUSIC_MODES.map((m) => [m, CLIP_MUSIC_LABELS[m]]))}
+        <p className="text-xs text-muted-foreground">
+          &quot;From music mood&quot; asks models that make their own sound for the scene&apos;s music mood, quietly under
+          the ambient sound.
+        </p>
       </div>
       <Button variant="outline" disabled={!dirty || pending} onClick={() => run(() => updatePlanSettings(planId, values))}>
         Save settings

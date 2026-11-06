@@ -16,15 +16,19 @@ import {
   stories,
   storyCharacters,
   storyRevisions,
+  videos,
 } from "@/db/schema";
 import { HEDRA_PROVIDER } from "@/lib/hedra";
 import { DEFAULT_IMAGE_MODEL, DEFAULT_VIDEO_MODEL, getHiggsfieldModel } from "@/lib/higgsfield";
+import { isVideoLocked } from "@/lib/long-video";
+import type { SceneOverlay } from "@/lib/overlays";
 import { REPLICATE_PROVIDER } from "@/lib/replicate";
 import {
   ASPECT_RATIOS,
   ASSET_KINDS,
   buildGenerationPrompt,
   buildVideoPrompt,
+  CLIP_MUSIC_MODES,
   moveInOrder,
   normalizeName,
   parseSceneForm,
@@ -37,6 +41,7 @@ import { getHiggsfieldClient } from "@/server/providers/higgsfield";
 import { getReplicateClient } from "@/server/providers/replicate";
 import {
   addAsset,
+  loadClipMusic,
   refreshActiveJobs,
   refreshApiJob,
   retryApiJob,
@@ -206,6 +211,7 @@ const planSettingsSchema = z.object({
   imageModel: z.string().refine((m) => getHiggsfieldModel(m)?.output === "image", "Choose an image model"),
   videoModel: z.string().refine((m) => getHiggsfieldModel(m)?.output === "video", "Choose a video model"),
   visualStyle: z.string().trim().max(300),
+  clipMusic: z.enum(CLIP_MUSIC_MODES),
 });
 
 export async function updatePlanSettings(
@@ -258,8 +264,27 @@ export async function updateScene(sceneId: string, _prev: SceneFormState, formDa
     return { ok: false, message: DB_ERROR };
   }
   if (!planId) return { ok: false, message: "Scene not found" };
+  await syncVideoOverlays(planId, id.data, values.overlays).catch((error) => console.error("syncVideoOverlays failed", error));
+  // Shorts read their scenes' overlays live, so their renders may now be out of date.
+  revalidatePath("/shorts", "layout");
+  revalidatePath("/publishing");
   revalidateProduction(planId, id.data);
   return { ok: true, message: "Scene saved" };
+}
+
+/**
+ * Copies a scene's overlays into the clips of the plan's videos that can still be edited, so a
+ * render made with the old overlays shows as out of date.
+ */
+async function syncVideoOverlays(planId: string, sceneId: string, overlays: SceneOverlay[]) {
+  const rows = await db.select().from(videos).where(eq(videos.planId, planId));
+  for (const video of rows) {
+    if (isVideoLocked(video) || !video.clips.some((c) => c.sceneId === sceneId)) continue;
+    const clips = video.clips.map((c) => (c.sceneId === sceneId ? { ...c, overlays } : c));
+    if (JSON.stringify(clips) === JSON.stringify(video.clips)) continue;
+    await db.update(videos).set({ clips }).where(eq(videos.id, video.id));
+    revalidatePath(`/videos/${video.id}`);
+  }
 }
 
 export async function addScene(planId: string): Promise<ActionResult> {
@@ -500,6 +525,7 @@ export async function startManualJob(sceneId: string, outputKind: string): Promi
       .from(sceneCharacters)
       .innerJoin(characters, eq(sceneCharacters.characterId, characters.id))
       .where(eq(sceneCharacters.sceneId, id.data));
+    const music = kind.data === "video" ? await loadClipMusic(row.plan, row.scene) : null;
     await db.transaction(async (tx) => {
       await tx.insert(generationJobs).values({
         sceneId: id.data,
@@ -519,6 +545,7 @@ export async function startManualJob(sceneId: string, outputKind: string): Promi
                 durationSeconds: row.scene.durationSeconds,
                 startImage: false,
                 voiced: true,
+                music,
               })
             : buildGenerationPrompt({
                 visualPrompt: row.scene.visualPrompt,

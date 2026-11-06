@@ -1,12 +1,13 @@
 import "server-only";
 
 import { execFile, spawn } from "node:child_process";
-import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
 import { buildConcatArgs, type EditSettings, parseProgressSeconds, pickFps, type VideoClip } from "@/lib/long-video";
-import { type AudioLevels, buildJoinArgs, buildRenderArgs, type Framing, type MediaProbe, parseLoudness, parseProbe } from "@/lib/short-video";
+import { buildOverlayBurnArgs, buildOverlayImageArgs, overlayLayout, placeOverlays, type SceneOverlay } from "@/lib/overlays";
+import { type AudioLevels, buildJoinArgs, buildRenderArgs, type Framing, type MediaProbe, OUT_H, OUT_W, parseLoudness, parseProbe } from "@/lib/short-video";
 
 import { resolveMediaPath } from "./storage";
 
@@ -24,13 +25,17 @@ export class FfmpegError extends Error {}
 
 const RENDER_TIMEOUT_MS = 10 * 60_000;
 
-function run(command: string, args: string[], options: { cwd?: string; timeout?: number } = {}) {
+function run(command: string, args: string[], options: { cwd?: string; timeout?: number; signal?: AbortSignal } = {}) {
   return new Promise<{ stdout: string; stderr: string }>((resolve, reject) => {
     execFile(
       command,
       args,
-      { cwd: options.cwd, timeout: options.timeout ?? 60_000, maxBuffer: 32 * 1024 * 1024, windowsHide: true },
+      { cwd: options.cwd, timeout: options.timeout ?? 60_000, maxBuffer: 32 * 1024 * 1024, windowsHide: true, signal: options.signal },
       (error, stdout, stderr) => {
+        if (error?.name === "AbortError") {
+          reject(new FfmpegError("Render cancelled"));
+          return;
+        }
         if (error) {
           const missing = (error as NodeJS.ErrnoException).code === "ENOENT";
           reject(
@@ -102,6 +107,8 @@ export async function renderVertical(input: {
   framing: Framing;
   assSubtitles: string | null;
   normalizeAudio: boolean;
+  /** Scene text overlays on the source's timeline, laid out in the 1080×1920 frame. */
+  overlays: { overlays: SceneOverlay[]; durationSeconds: number; fps: number } | null;
 }) {
   const relative = `${input.folder}/${input.fileName}`;
   if (relative === input.sourcePath) throw new FfmpegError("Refusing to overwrite the source clip");
@@ -111,12 +118,16 @@ export async function renderVertical(input: {
   const work = await mkdtemp(path.join(tmpdir(), "kids-studio-short-"));
   try {
     if (input.assSubtitles) await writeFile(path.join(work, "overlay.ass"), input.assSubtitles, "utf8");
+    const overlays = input.overlays?.overlays.length
+      ? { ...input.overlays, placements: await drawOverlayImages({ ...input.overlays, work, width: OUT_W, height: OUT_H }) }
+      : undefined;
     const args = buildRenderArgs({
       inputPath: absolute(input.sourcePath),
       outputPath,
       framing: input.framing,
       subtitlesFile: input.assSubtitles ? "overlay.ass" : null,
       normalizeAudio: input.normalizeAudio,
+      overlays,
     });
     await run(getFfmpegPaths().ffmpeg, args, { cwd: work, timeout: RENDER_TIMEOUT_MS });
     const info = await stat(outputPath);
@@ -182,8 +193,26 @@ export async function renderTimeline(input: {
   const work = await mkdtemp(path.join(tmpdir(), "kids-studio-video-"));
   try {
     if (input.assSubtitles) await writeFile(path.join(work, "captions.ass"), input.assSubtitles, "utf8");
+    // Overlays go into copies of the clips in the work folder, so their times stay relative to each clip.
+    const inputPaths: string[] = [];
+    for (const [i, c] of input.clips.entries()) {
+      const burned =
+        c.overlays?.length && c.width && c.height && c.sourceSeconds
+          ? await burnOverlays({
+              inputPath: absolute(c.filePath),
+              outputPath: path.join(work, `scene-${i + 1}-overlays.mp4`),
+              width: c.width,
+              height: c.height,
+              durationSeconds: c.sourceSeconds,
+              fps: Math.round(c.fps ?? 30) || 30,
+              overlays: c.overlays,
+              signal: input.signal,
+            })
+          : null;
+      inputPaths.push(burned ?? absolute(c.filePath));
+    }
     const { args, durationSeconds } = buildConcatArgs({
-      clips: input.clips.map((c) => ({ ...c, inputPath: absolute(c.filePath) })),
+      clips: input.clips.map((c, i) => ({ ...c, inputPath: inputPaths[i] })),
       settings: input.settings,
       outputPath,
       subtitlesFile: input.assSubtitles ? "captions.ass" : null,
@@ -201,6 +230,71 @@ export async function renderTimeline(input: {
   } catch (error) {
     await rm(outputPath, { force: true }).catch(() => undefined);
     throw error;
+  } finally {
+    await rm(work, { recursive: true, force: true });
+  }
+}
+
+// Child-friendly rounded font for burned-in overlays (SIL Open Font License, see assets/fonts/OFL.txt).
+const OVERLAY_FONT = path.join(/*turbopackIgnore: true*/ process.cwd(), "assets", "fonts", "VarelaRound-Regular.ttf");
+
+/**
+ * Draws each overlay that falls inside the clip into a transparent PNG in `work`, sized to its text
+ * for a frame of `width`×`height`, and returns where each goes. FFmpeg later runs in `work`, so the
+ * images are referred to by bare name.
+ */
+async function drawOverlayImages(input: {
+  work: string;
+  width: number;
+  height: number;
+  durationSeconds: number;
+  overlays: SceneOverlay[];
+  signal?: AbortSignal;
+}) {
+  const frame = { width: input.width, height: input.height };
+  const placements = placeOverlays(input.overlays, frame, input.durationSeconds, (i) => `overlay-${i}.png`);
+  if (!placements.length) return placements;
+  await copyFile(OVERLAY_FONT, path.join(input.work, "font.ttf"));
+  for (const [i, overlay] of input.overlays.entries()) {
+    if (!placements.some((p) => p.imagePath === `overlay-${i}.png`)) continue;
+    const layout = overlayLayout(overlay, frame);
+    const lineFiles = layout.lines.map((_, j) => `overlay-${i}-line-${j}.txt`);
+    await Promise.all(layout.lines.map((line, j) => writeFile(path.join(input.work, lineFiles[j]), line, "utf8")));
+    const args = buildOverlayImageArgs({ type: overlay.type, layout, fontFile: "font.ttf", lineFiles, outputPath: `overlay-${i}.png` });
+    await run(getFfmpegPaths().ffmpeg, args, { cwd: input.work, signal: input.signal });
+  }
+  return placements;
+}
+
+/**
+ * Burns a scene's text overlays into a new copy of its clip at `outputPath` (absolute) and returns
+ * that path, or null when no overlay falls inside the clip. The clip is only read. Each overlay is
+ * first drawn into a transparent PNG sized to its text, then laid over the clip with its fades.
+ */
+export async function burnOverlays(input: {
+  inputPath: string;
+  outputPath: string;
+  width: number;
+  height: number;
+  durationSeconds: number;
+  fps: number;
+  overlays: SceneOverlay[];
+  signal?: AbortSignal;
+}) {
+  if (path.resolve(input.outputPath) === path.resolve(input.inputPath)) throw new FfmpegError("Refusing to overwrite the source clip");
+  const work = await mkdtemp(path.join(tmpdir(), "kids-studio-overlays-"));
+  try {
+    const placements = await drawOverlayImages({ ...input, work });
+    if (!placements.length) return null;
+    const args = buildOverlayBurnArgs({
+      inputPath: input.inputPath,
+      outputPath: input.outputPath,
+      durationSeconds: input.durationSeconds,
+      fps: input.fps,
+      overlays: placements,
+    });
+    await run(getFfmpegPaths().ffmpeg, args, { cwd: work, timeout: RENDER_TIMEOUT_MS, signal: input.signal });
+    return input.outputPath;
   } finally {
     await rm(work, { recursive: true, force: true });
   }

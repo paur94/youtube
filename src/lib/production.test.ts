@@ -6,6 +6,7 @@ import {
   buildGenerationPrompt,
   buildVideoPrompt,
   clampDuration,
+  clipMusicMood,
   describeDialogue,
   describeReferenceImages,
   DEFAULT_NEGATIVE_PROMPT,
@@ -326,6 +327,46 @@ describe("buildVideoPrompt", () => {
     expect(silent).not.toContain("Dialogue");
     const quiet = buildVideoPrompt({ ...scene, startImage: true, dialogue: [] });
     expect(quiet).toContain("No dialogue, no narrator or voice-over. Quiet ambient sound only; no background music.");
+  });
+
+  describe("music in generated clips", () => {
+    const silent = { ...scene, startImage: true, dialogue: [] };
+
+    it('"none" keeps clips free of music, whatever the mood', () => {
+      const music = clipMusicMood("none", sampleContent, { position: 0, title: "Rainy morning" });
+      expect(music).toBeNull();
+      const prompt = buildVideoPrompt({ ...silent, music });
+      expect(prompt.endsWith("No dialogue, no narrator or voice-over. Quiet ambient sound only; no background music.")).toBe(true);
+      expect(prompt).not.toContain("Audio:");
+      expect(prompt).toBe(buildVideoPrompt(silent));
+      expect(buildVideoPrompt({ ...scene, startImage: true, music })).toMatch(/No background music\.$/);
+    });
+
+    it('"from music mood" ends the prompt with the scene\'s mood instead of "no background music"', () => {
+      const music = clipMusicMood("music_mood", sampleContent, { position: 0, title: "Rainy morning" });
+      expect(music).toBe("Light ukulele");
+      const prompt = buildVideoPrompt({ ...silent, music });
+      expect(prompt.endsWith("\n\nAudio: Light ukulele, soft and quiet under ambient sounds. No voices, no singing.")).toBe(true);
+      expect(prompt).not.toMatch(/no background music/i);
+      expect(prompt).toContain("No dialogue, no narrator or voice-over.");
+      expect(prompt).not.toContain("Good morning");
+    });
+
+    it("keeps the dialogue and only rules out other voices when the scene has lines", () => {
+      const prompt = buildVideoPrompt({ ...scene, startImage: true, music: "Gentle harp." });
+      expect(prompt).toContain('Levon says: "Lie on your back." Lip sync.');
+      expect(prompt).toContain("No other dialogue. No narrator or voice-over.\n\nAudio: Gentle harp, soft and quiet under the dialogue");
+      expect(prompt).not.toMatch(/no background music/i);
+      expect(prompt).toMatch(/No other voices, no singing\.$/);
+    });
+
+    it("falls back to the story's overall mood, and asks silent models for nothing", () => {
+      const noSceneMood = { ...sampleContent, scenes: sampleContent.scenes.map((s) => ({ ...s, musicMood: "" })) };
+      expect(clipMusicMood("music_mood", noSceneMood, { position: 1, title: "Counting puddles" })).toBe("Cheerful and gentle");
+      expect(clipMusicMood("music_mood", sampleContent, { position: 1, title: "Renamed scene" })).toBe("Bouncy");
+      expect(clipMusicMood("music_mood", null, { position: 0, title: "Rainy morning" })).toBeNull();
+      expect(buildVideoPrompt({ ...silent, voiced: false, music: "Bouncy" })).not.toContain("Audio:");
+    });
   });
 });
 

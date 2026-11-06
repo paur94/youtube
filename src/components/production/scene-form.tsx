@@ -9,10 +9,13 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import type { ProductionScene } from "@/db/schema";
+import { readOverlays } from "@/lib/overlays";
 import { findPromptConcerns, type SceneFormState } from "@/lib/production";
 import { formatDialogue } from "@/lib/stories";
 import { updateScene } from "@/server/actions/production";
 import type { CharacterOption } from "@/server/queries/production";
+
+import { OverlayFields } from "./overlay-fields";
 
 export function SceneForm({
   scene,
@@ -150,6 +153,12 @@ export function SceneForm({
       <Field id={`${id}-notes`} label="Production notes" error={errors?.notes}>
         <Textarea id={`${id}-notes`} name="notes" rows={2} maxLength={2000} defaultValue={scene.notes} />
       </Field>
+      <OverlayFields
+        id={id}
+        initial={readOverlays(scene.overlays)}
+        durationSeconds={scene.durationSeconds}
+        error={errors?.overlays}
+      />
 
       <div className="flex justify-end">
         <Button type="submit" disabled={pending}>

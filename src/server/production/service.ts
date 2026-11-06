@@ -8,6 +8,7 @@ import { and, asc, desc, eq, inArray, isNull, ne, sql } from "drizzle-orm";
 import { db } from "@/db";
 import {
   type Asset,
+  type ProductionPlan,
   type ProductionScene,
   assets,
   characters,
@@ -15,6 +16,7 @@ import {
   productionPlans,
   productionScenes,
   sceneCharacters,
+  stories,
 } from "@/db/schema";
 import { interpretRemoteStatus } from "@/lib/generation-jobs";
 import {
@@ -47,6 +49,7 @@ import {
   type AssetSource,
   buildGenerationPrompt,
   buildVideoPrompt,
+  clipMusicMood,
   deriveSceneStatus,
   DIALOGUE_NEGATIVE_PROMPT,
   describeReferenceImages,
@@ -218,6 +221,16 @@ export async function loadSceneForGeneration(sceneId: string) {
   return { ...row, characters: linked, prompt };
 }
 
+/** The music mood a scene's clips ask for, or null when the plan keeps generated clips free of music. */
+export async function loadClipMusic(
+  plan: Pick<ProductionPlan, "storyId" | "clipMusic">,
+  scene: Pick<ProductionScene, "position" | "title">,
+) {
+  if (plan.clipMusic === "none" || !plan.storyId) return null;
+  const [story] = await db.select({ content: stories.content }).from(stories).where(eq(stories.id, plan.storyId));
+  return clipMusicMood(plan.clipMusic, story?.content ?? null, scene);
+}
+
 type CharacterRef = { id: string; name: string; primaryReferenceId: string | null };
 
 /**
@@ -361,6 +374,7 @@ export async function submitApiGeneration(options: SubmitOptions): Promise<Servi
       durationSeconds: modelDuration(model, scene.durationSeconds) ?? scene.durationSeconds,
       startImage: model.input === "image",
       voiced,
+      music: await loadClipMusic(plan, scene),
     });
     negativePrompt = [negativePrompt.trim(), VIDEO_NEGATIVE_PROMPT, voiced ? DIALOGUE_NEGATIVE_PROMPT : ""]
       .filter(Boolean)

@@ -1,3 +1,4 @@
+import { buildOverlayGraph, type OverlayPlacement } from "./overlays";
 import type { CaptionCue, VideoSettings } from "./shorts";
 
 // Pure helpers for the vertical render: framing geometry (also used by the browser preview),
@@ -68,7 +69,8 @@ export function computeFraming(sourceW: number, sourceH: number, settings: Pick<
   };
 }
 
-export function buildFilterGraph(framing: Framing, subtitlesFile: string | null) {
+/** `overlays`: steps from buildOverlayGraph that draw scene overlays over `[base]`, below the captions. */
+export function buildFilterGraph(framing: Framing, subtitlesFile: string | null, overlays?: { graph: string[]; output: string }) {
   const f = framing;
   const crop = `crop=${f.visibleW}:${f.visibleH}:${f.cropX}:${f.cropY}`;
   const parts = f.fillsFrame
@@ -80,9 +82,11 @@ export function buildFilterGraph(framing: Framing, subtitlesFile: string | null)
         `[fgsrc]scale=${f.scaledW}:${f.scaledH}:flags=lanczos,${crop}[fg]`,
         `[bg][fg]overlay=${f.offsetX}:${f.offsetY},setsar=1[base]`,
       ];
+  const framed = overlays ? overlays.output : "base";
+  if (overlays) parts.push(...overlays.graph);
   // The subtitle file is passed as a bare name and FFmpeg runs in its folder, which avoids
   // escaping Windows drive letters inside the filter graph.
-  parts.push(subtitlesFile ? `[base]ass=${subtitlesFile},format=yuv420p[v]` : "[base]format=yuv420p[v]");
+  parts.push(subtitlesFile ? `[${framed}]ass=${subtitlesFile},format=yuv420p[v]` : `[${framed}]format=yuv420p[v]`);
   return parts.join(";");
 }
 
@@ -95,15 +99,21 @@ export function buildRenderArgs(input: {
   framing: Framing;
   subtitlesFile: string | null;
   normalizeAudio: boolean;
+  /** Overlay images placed in the 1080×1920 frame; they need the source's length and frame rate. */
+  overlays?: { placements: OverlayPlacement[]; durationSeconds: number; fps: number };
 }) {
+  const overlays = input.overlays?.placements.length
+    ? buildOverlayGraph({ ...input.overlays, overlays: input.overlays.placements, firstInput: 1, from: "base" })
+    : undefined;
   return [
     "-hide_banner",
     "-nostdin",
     "-y",
     "-i",
     input.inputPath,
+    ...(overlays?.args ?? []),
     "-filter_complex",
-    buildFilterGraph(input.framing, input.subtitlesFile),
+    buildFilterGraph(input.framing, input.subtitlesFile, overlays),
     "-map",
     "[v]",
     "-map",

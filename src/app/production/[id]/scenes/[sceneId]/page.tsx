@@ -21,8 +21,10 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Skeleton } from "@/components/ui/skeleton";
 import { HIGGSFIELD_MODELS } from "@/lib/higgsfield";
 import { MODULES } from "@/lib/navigation";
+import { readOverlays } from "@/lib/overlays";
 import { buildGenerationPrompt, buildVideoPrompt, findPromptConcerns, POLLABLE_JOB_STATUSES } from "@/lib/production";
 import { getClaudeConfig } from "@/server/ai/claude";
+import { loadClipMusic } from "@/server/production/service";
 import { getHedraConfig } from "@/server/providers/hedra";
 import { getHiggsfieldConfig } from "@/server/providers/higgsfield";
 import { getReplicateConfig } from "@/server/providers/replicate";
@@ -93,6 +95,7 @@ async function SceneData({ params }: Pick<Props, "params">) {
   const higgsfield = getHiggsfieldConfig();
   const linked = characterOptions.filter((c) => detail.characterIds.includes(c.id));
   const prompt = buildGenerationPrompt({ visualPrompt: scene.visualPrompt, characters: linked, visualStyle: plan.visualStyle });
+  const music = await loadClipMusic(plan, scene);
   // Clips are prompted from the action and dialogue (no voice-over); the exact text depends on whether the
   // model animates a start image. Shown in the panel so what is sent can be checked before generating.
   const videoPromptFor = (startImage: boolean) =>
@@ -105,6 +108,7 @@ async function SceneData({ params }: Pick<Props, "params">) {
       durationSeconds: scene.durationSeconds,
       startImage,
       voiced: true,
+      music,
     });
   const videoPrompts = { fromImage: videoPromptFor(true), fromText: videoPromptFor(false) };
   const concerns = [
@@ -112,6 +116,7 @@ async function SceneData({ params }: Pick<Props, "params">) {
     ...qcBlockers,
   ];
   const revisions = new Map(detail.assets.map((a) => [a.id, a.revision]));
+  const overlays = readOverlays(scene.overlays);
   const activeApiJobs = detail.jobs.filter((j) => j.mode === "api" && POLLABLE_JOB_STATUSES.includes(j.status)).length;
 
   const characterReferences = linked.map((c) => ({
@@ -282,6 +287,7 @@ async function SceneData({ params }: Pick<Props, "params">) {
                   asset={toAssetItem(asset, (assetId) => revisions.get(assetId), assetQc)}
                   isFinal={scene.selectedAssetId === asset.id}
                   canInspect={claude.configured}
+                  overlays={overlays}
                 />
               ))}
             </div>

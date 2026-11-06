@@ -48,7 +48,7 @@ import { resolveMediaPath } from "@/server/media/storage";
 import { markIdeaPublished } from "@/server/pipeline";
 import { acceptShortCriticalIssues, consistencyPublishBlocker, shortConsistency } from "@/server/qc/service";
 import { getYouTubeConfig, YouTubeError } from "@/server/providers/youtube";
-import { buildQualityInput, getShort, getShortPublishContext, isRenderCurrent } from "@/server/queries/shorts";
+import { buildQualityInput, getShort, getShortPublishContext, isRenderCurrent, withOverlays } from "@/server/queries/shorts";
 import { getYouTubeClient, getYouTubeConnection } from "@/server/youtube/connection";
 
 import type { ActionResult } from "./ideas";
@@ -706,6 +706,9 @@ export async function renderShort(id: string): Promise<ActionResult> {
     const cues = s.burnCaptions ? short.captions : [];
     const hook = s.showHook && short.hook.trim() ? short.hook : null;
     const ass = cues.length || hook ? buildAssFile({ cues, hook, hookSeconds: short.hookSeconds, framing }) : null;
+    // Measured against the probe saved below, so the render key matches later checks.
+    const [{ overlays }] = await withOverlays([{ ...short, sourceProbe: source }]);
+    if (overlays.length && !source.durationSeconds) throw new FfmpegError("The source's length couldn't be measured to place its text overlays");
 
     const filePath = await renderVertical({
       sourcePath: short.sourceFilePath,
@@ -714,6 +717,7 @@ export async function renderShort(id: string): Promise<ActionResult> {
       framing,
       assSubtitles: ass,
       normalizeAudio: s.normalizeAudio,
+      overlays: overlays.length ? { overlays, durationSeconds: source.durationSeconds!, fps: Math.round(source.fps ?? 30) || 30 } : null,
     });
     const outputProbe = await probeMedia(filePath);
     const outputAudio = outputProbe.hasAudio ? await measureLoudness(filePath).catch(() => null) : null;
@@ -723,7 +727,7 @@ export async function renderShort(id: string): Promise<ActionResult> {
       .set({
         sourceProbe: source,
         renderFilePath: filePath,
-        renderKey: renderKey({ ...short, settings: short.videoSettings }),
+        renderKey: renderKey({ ...short, settings: short.videoSettings, overlays }),
         renderedAt: new Date(),
         renderError: null,
         outputProbe,
@@ -767,7 +771,8 @@ async function reviewBlockers(short: Short, acceptQc = false) {
   }
   const ffmpegAvailable = Boolean(await getFfmpegVersion());
   const consistency = await shortConsistency(short);
-  const checks = evaluateQuality({ ...buildQualityInput(short, { ffmpegAvailable, hasDialogue: short.captions.length > 0 }), consistency });
+  const [withOv] = await withOverlays([short]);
+  const checks = evaluateQuality({ ...buildQualityInput(withOv, { ffmpegAvailable, hasDialogue: short.captions.length > 0 }), consistency });
   return approvalBlockers(checks, { rendered: Boolean(short.renderFilePath), metadataApproved: Boolean(short.metadataApprovedAt) });
 }
 

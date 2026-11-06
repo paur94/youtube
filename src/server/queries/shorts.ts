@@ -14,6 +14,7 @@ import {
   shorts,
   stories,
 } from "@/db/schema";
+import { readOverlays, type SceneOverlay, sequenceOverlays } from "@/lib/overlays";
 import { type QualityInput } from "@/lib/short-qc";
 import { QUEUE_STATUSES, renderKey } from "@/lib/shorts";
 
@@ -24,8 +25,31 @@ const orderBy = [
   asc(shorts.createdAt),
 ] as const;
 
+type ShortSource = Pick<Short, "sceneId" | "parts" | "sourceProbe">;
+
+/**
+ * The Shorts with their scenes' current text overlays on each Short's timeline (a merged Short's
+ * scenes back to back). Overlays live on the scenes, so edits there make a render out of date.
+ */
+export async function withOverlays<T extends ShortSource>(list: T[]): Promise<(T & { overlays: SceneOverlay[] })[]> {
+  const sceneIds = [...new Set(list.flatMap((s) => (s.parts?.length ? s.parts.map((p) => p.sceneId) : [s.sceneId])))].filter(
+    (id): id is string => id !== null,
+  );
+  const rows = sceneIds.length
+    ? await db.select({ id: productionScenes.id, overlays: productionScenes.overlays }).from(productionScenes).where(inArray(productionScenes.id, sceneIds))
+    : [];
+  const byScene = new Map(rows.map((r) => [r.id, readOverlays(r.overlays)]));
+  const of = (sceneId: string | null) => (sceneId ? (byScene.get(sceneId) ?? []) : []);
+  return list.map((s) => ({
+    ...s,
+    overlays: s.parts?.length
+      ? sequenceOverlays(s.parts.map((p) => ({ overlays: of(p.sceneId), durationSeconds: p.durationSeconds })))
+      : sequenceOverlays([{ overlays: of(s.sceneId), durationSeconds: s.sourceProbe?.durationSeconds ?? Number.POSITIVE_INFINITY }]),
+  }));
+}
+
 export async function listShorts() {
-  return db
+  const rows = await db
     .select({
       short: shorts,
       planTitle: productionPlans.title,
@@ -35,6 +59,8 @@ export async function listShorts() {
     .leftJoin(productionPlans, eq(shorts.planId, productionPlans.id))
     .leftJoin(productionScenes, eq(shorts.sceneId, productionScenes.id))
     .orderBy(...orderBy);
+  const withOv = await withOverlays(rows.map((r) => r.short));
+  return rows.map((r, i) => ({ ...r, short: withOv[i] }));
 }
 
 /** Scenes whose final clip is an approved video stored on disk, grouped by plan. */
@@ -98,6 +124,7 @@ export async function getShort(id: string) {
     .where(eq(shorts.id, id));
   if (!row) return null;
 
+  const [short] = await withOverlays([row.short]);
   const partIds = (row.short.parts ?? []).map((p) => p.sceneId).filter((s): s is string => s !== null);
   const [siblings, generations, currentAsset, partRows] = await Promise.all([
     row.short.planId
@@ -147,7 +174,7 @@ export async function getShort(id: string) {
   const firstIndex = first ? siblings.findIndex((s) => s.id === first) : -1;
   const lastIndex = last ? siblings.findIndex((s) => s.id === last) : -1;
   return {
-    ...row.short,
+    ...short,
     plan: row.plan?.id ? row.plan : null,
     story: row.story?.id ? row.story : null,
     madeForKids: row.idea?.madeForKids ?? true,
@@ -167,11 +194,13 @@ export async function getShort(id: string) {
 
 export type ShortDetail = NonNullable<Awaited<ReturnType<typeof getShort>>>;
 
-export function isRenderCurrent(short: Pick<Short, "renderFilePath" | "renderKey" | "sourceFilePath" | "videoSettings" | "captions" | "hook" | "hookSeconds">) {
+export function isRenderCurrent(
+  short: Pick<Short, "renderFilePath" | "renderKey" | "sourceFilePath" | "videoSettings" | "captions" | "hook" | "hookSeconds"> & { overlays: SceneOverlay[] },
+) {
   return Boolean(short.renderFilePath) && short.renderKey === renderKey({ ...short, settings: short.videoSettings });
 }
 
-export function buildQualityInput(short: Short, options: { ffmpegAvailable: boolean; hasDialogue: boolean }): QualityInput {
+export function buildQualityInput(short: Short & { overlays: SceneOverlay[] }, options: { ffmpegAvailable: boolean; hasDialogue: boolean }): QualityInput {
   return {
     sourceProbe: short.sourceProbe,
     outputProbe: short.outputProbe,
@@ -191,7 +220,7 @@ export function buildQualityInput(short: Short, options: { ffmpegAvailable: bool
 }
 
 export async function getPublishingQueue() {
-  return db
+  const rows = await db
     .select({
       short: shorts,
       planTitle: productionPlans.title,
@@ -205,6 +234,8 @@ export async function getPublishingQueue() {
     .leftJoin(ideas, eq(stories.ideaId, ideas.id))
     .where(inArray(shorts.status, [...QUEUE_STATUSES]))
     .orderBy(sql`${shorts.scheduledAt} asc nulls last`, ...orderBy);
+  const withOv = await withOverlays(rows.map((r) => r.short));
+  return rows.map((r, i) => ({ ...r, short: withOv[i] }));
 }
 
 /** A Short plus the story language and compliance flags its YouTube metadata needs. */
@@ -220,7 +251,9 @@ export async function getShortPublishContext(id: string) {
     .leftJoin(stories, eq(shorts.storyId, stories.id))
     .leftJoin(ideas, eq(stories.ideaId, ideas.id))
     .where(eq(shorts.id, id));
-  return row ?? null;
+  if (!row) return null;
+  const [short] = await withOverlays([row.short]);
+  return { ...row, short };
 }
 
 export async function getShortStatusCounts() {

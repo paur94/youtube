@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { MAX_OVERLAYS, sceneOverlaySchema, validateOverlays } from "./overlays";
 import { parseDialogue, type StoryContent, type StoryScene } from "./stories";
 
 // Shared by the DB schema, server actions, the generation queue and client components.
@@ -85,6 +86,15 @@ export const JOB_TIMEOUT_MS = 30 * 60_000;
 
 export const ASPECT_RATIOS = ["16:9", "9:16", "1:1", "4:3", "3:4"] as const;
 export type AspectRatio = (typeof ASPECT_RATIOS)[number];
+
+/** Whether voiced video models are asked for background music. */
+export const CLIP_MUSIC_MODES = ["none", "music_mood"] as const;
+export type ClipMusicMode = (typeof CLIP_MUSIC_MODES)[number];
+
+export const CLIP_MUSIC_LABELS: Record<ClipMusicMode, string> = {
+  none: "None (ambient sound only)",
+  music_mood: "From music mood",
+};
 
 // Avoids common failure modes for children's content and keeps output free of IP and text.
 export const DEFAULT_NEGATIVE_PROMPT =
@@ -379,7 +389,7 @@ export function stripNarration(text: string) {
 export function describeDialogue(
   lines: StoryScene["dialogue"],
   onScreen: string[] = [],
-  options: { timeline?: ActionSegment[] } = {},
+  options: { timeline?: ActionSegment[]; /** The prompt asks for music separately. */ music?: boolean } = {},
 ) {
   const spoken = lines
     .map((d) => parseDialogueRow(`${d.character.trim()}: ${d.line.trim()}`))
@@ -423,7 +433,7 @@ export function describeDialogue(
       : ", in this order, at the moment the action above says they speak") +
     `. Natural, lively children's-TV pace, about ${Math.max(total, 1)} seconds of speech in total: each line takes only as long as its words need and is never slowed or stretched; between lines nobody speaks. ` +
     "Only one character speaks at a time and only the speaker's lips move:";
-  return `${header}\n${rendered.join("\n")}\nNo other dialogue. No narrator or voice-over. No background music.`;
+  return `${header}\n${rendered.join("\n")}\nNo other dialogue. No narrator or voice-over.${options.music ? "" : " No background music."}`;
 }
 
 export type VideoPromptInput = {
@@ -438,6 +448,8 @@ export type VideoPromptInput = {
   startImage: boolean;
   /** The model generates its own sound, so the prompt carries the dialogue. */
   voiced: boolean;
+  /** Music mood to ask a voiced model for (see clipMusicMood); without one the clip has no music. */
+  music?: string | null;
 };
 
 /** The identifying first sentence of a character's bible entry, unless it already names clothes. */
@@ -500,10 +512,35 @@ export function buildVideoPrompt(input: VideoPromptInput) {
   }
 
   if (input.voiced) {
-    const dialogue = describeDialogue(input.dialogue, names, { timeline: timeline.segments });
-    parts.push(dialogue || "No dialogue, no narrator or voice-over. Quiet ambient sound only; no background music.");
+    const music = input.music?.replace(/\s+/g, " ").replace(/[\s.,;:!]+$/, "").trim();
+    const dialogue = describeDialogue(input.dialogue, names, { timeline: timeline.segments, music: Boolean(music) });
+    if (!music) {
+      parts.push(dialogue || "No dialogue, no narrator or voice-over. Quiet ambient sound only; no background music.");
+    } else if (dialogue) {
+      // "No voices" would contradict the lines above.
+      parts.push(dialogue, `Audio: ${music}, soft and quiet under the dialogue and ambient sounds. No other voices, no singing.`);
+    } else {
+      parts.push("No dialogue, no narrator or voice-over.", `Audio: ${music}, soft and quiet under ambient sounds. No voices, no singing.`);
+    }
   }
   return parts.filter(Boolean).join("\n\n");
+}
+
+/**
+ * The music mood a scene's clip asks for when the plan's "Music in generated clips" setting uses it:
+ * the story scene's own mood (matched by title, then by number), else the story's overall mood.
+ */
+export function clipMusicMood(
+  mode: string,
+  content: Pick<StoryContent, "scenes" | "musicMood"> | null,
+  scene: { position: number; title: string },
+) {
+  if (mode !== "music_mood" || !content) return null;
+  const title = scene.title.trim().toLowerCase();
+  const match =
+    content.scenes.find((s) => s.title.trim().toLowerCase() === title) ??
+    content.scenes.find((s) => Number(s.number) === scene.position + 1);
+  return match?.musicMood?.trim() || content.musicMood?.trim() || null;
 }
 
 function joinNames(names: string[]) {
@@ -656,27 +693,43 @@ export function moveInOrder<T>(ids: T[], id: T, direction: "up" | "down") {
 
 const text = (max: number) => z.string().trim().max(max).default("");
 
-export const sceneInputSchema = z.object({
-  title: z.string().trim().min(1, "Give the scene a title").max(160),
-  setting: text(2000),
-  action: text(4000),
-  narration: text(8000),
-  dialogue: text(8000).transform(parseDialogue),
-  durationSeconds: z.coerce
-    .number("Enter a duration")
-    .int("Use whole seconds")
-    .min(1, "At least 1 second")
-    .max(600, "At most 10 minutes"),
-  visualPrompt: text(6000),
-  negativePrompt: text(2000),
-  notes: text(2000),
-  characterIds: z.array(z.uuid()).max(30).default([]),
-});
+export const sceneInputSchema = z
+  .object({
+    title: z.string().trim().min(1, "Give the scene a title").max(160),
+    setting: text(2000),
+    action: text(4000),
+    narration: text(8000),
+    dialogue: text(8000).transform(parseDialogue),
+    durationSeconds: z.coerce
+      .number("Enter a duration")
+      .int("Use whole seconds")
+      .min(1, "At least 1 second")
+      .max(600, "At most 10 minutes"),
+    visualPrompt: text(6000),
+    negativePrompt: text(2000),
+    notes: text(2000),
+    overlays: z.array(sceneOverlaySchema, "Invalid overlays").max(MAX_OVERLAYS * 2).default([]),
+    characterIds: z.array(z.uuid()).max(30).default([]),
+  })
+  .superRefine((scene, ctx) => {
+    for (const message of validateOverlays(scene.overlays, scene.durationSeconds)) {
+      ctx.addIssue({ code: "custom", path: ["overlays"], message });
+    }
+  });
 
 export type SceneInput = z.infer<typeof sceneInputSchema>;
 export type SceneFieldErrors = Partial<Record<keyof z.input<typeof sceneInputSchema>, string[]>>;
 export type SceneFormState =
   { ok: true; message: string } | { ok: false; message?: string; errors?: SceneFieldErrors } | null;
+
+function parseJson(value: FormDataEntryValue | null) {
+  if (typeof value !== "string") return undefined;
+  try {
+    return JSON.parse(value) as unknown;
+  } catch {
+    return null;
+  }
+}
 
 export function parseSceneForm(formData: FormData) {
   return sceneInputSchema.safeParse({
@@ -689,6 +742,7 @@ export function parseSceneForm(formData: FormData) {
     visualPrompt: formData.get("visualPrompt") ?? "",
     negativePrompt: formData.get("negativePrompt") ?? "",
     notes: formData.get("notes") ?? "",
+    overlays: parseJson(formData.get("overlays")),
     characterIds: formData.getAll("characterIds"),
   });
 }
