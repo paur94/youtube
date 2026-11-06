@@ -17,8 +17,12 @@ export type HiggsfieldModel = {
   aspectRatios?: readonly string[];
   supportsNegativePrompt: boolean;
   maxImages?: number;
+  /** Body field for the start image, when it is not image_url (Higgsfield) or image (Replicate). */
+  imageField?: string;
   /** Accepts this many ordered reference images (image_urls), used to keep characters consistent. */
   maxReferenceImages?: number;
+  /** Body field for the reference images, when it is not image_urls. */
+  referenceField?: string;
   /** Fixed, documented fields sent with every request. */
   fixedBody?: Record<string, unknown>;
   /** Always generates its own soundtrack; the API has no switch for it. */
@@ -42,6 +46,14 @@ const WAN_BODY = { resolution: "720p", generate_audio: true };
 // start image. Prompt expansion is off so the scene prompt is used as written.
 const REPLICATE_WAN_PATH = "/models/alibaba/wan-3/predictions";
 const REPLICATE_WAN_BODY = { resolution: "720p", enable_prompt_expansion: false };
+
+// Kling 4.0 on Replicate (https://replicate.com/kwaivgi/kling-v4.0, schema checked November 2026): one model
+// for text, start frame and reference images, $0.157/s at 720p, 3-30s. It always generates sound (checked on
+// example outputs: AAC track, no switch in the schema). No negative prompt, and aspect_ratio is ignored with
+// a start image.
+const REPLICATE_KLING_PATH = "/models/kwaivgi/kling-v4.0/predictions";
+const KLING_ASPECT_RATIOS = ["16:9", "9:16", "1:1", "21:9"];
+const REPLICATE_KLING_BODY = { resolution: "720p" };
 
 export const HIGGSFIELD_MODELS: readonly HiggsfieldModel[] = [
   {
@@ -135,6 +147,50 @@ export const HIGGSFIELD_MODELS: readonly HiggsfieldModel[] = [
     usdPerSecond: 0.1,
     nativeAudio: true,
   },
+  {
+    id: "replicate-kling-4-i2v",
+    label: "Kling 4.0 via Replicate (image to video, 720p, sound, ~$1.57 per 10s)",
+    path: REPLICATE_KLING_PATH,
+    output: "video",
+    input: "image",
+    imageField: "start_image",
+    durationRange: [3, 30],
+    supportsNegativePrompt: false,
+    fixedBody: REPLICATE_KLING_BODY,
+    provider: "replicate",
+    usdPerSecond: 0.157,
+    nativeAudio: true,
+  },
+  {
+    id: "replicate-kling-4-r2v",
+    label: "Kling 4.0 via Replicate (character references to video, 720p, sound, ~$1.57 per 10s)",
+    path: REPLICATE_KLING_PATH,
+    output: "video",
+    input: "text",
+    durationRange: [3, 30],
+    aspectRatios: KLING_ASPECT_RATIOS,
+    supportsNegativePrompt: false,
+    maxReferenceImages: 10,
+    referenceField: "reference_images",
+    fixedBody: REPLICATE_KLING_BODY,
+    provider: "replicate",
+    usdPerSecond: 0.157,
+    nativeAudio: true,
+  },
+  {
+    id: "replicate-kling-4-t2v",
+    label: "Kling 4.0 via Replicate (text to video, 720p, sound, ~$1.57 per 10s)",
+    path: REPLICATE_KLING_PATH,
+    output: "video",
+    input: "text",
+    durationRange: [3, 30],
+    aspectRatios: KLING_ASPECT_RATIOS,
+    supportsNegativePrompt: false,
+    fixedBody: REPLICATE_KLING_BODY,
+    provider: "replicate",
+    usdPerSecond: 0.157,
+    nativeAudio: true,
+  },
 ];
 
 export const DEFAULT_IMAGE_MODEL = "grok-image-2";
@@ -183,11 +239,11 @@ export function buildRequestBody(model: HiggsfieldModel, params: GenerationParam
   const body: Record<string, unknown> = { prompt: params.prompt, ...model.fixedBody };
   if (model.input === "image") {
     if (!params.imageUrl) throw new Error(`${model.label} needs a start image`);
-    body[model.provider === "replicate" ? "image" : "image_url"] = params.imageUrl;
+    body[model.imageField ?? (model.provider === "replicate" ? "image" : "image_url")] = params.imageUrl;
   }
   if (model.aspectRatios) body.aspect_ratio = pickAspectRatio(model.aspectRatios, params.aspectRatio);
   if (model.maxReferenceImages && params.referenceUrls?.length) {
-    body.image_urls = params.referenceUrls.slice(0, model.maxReferenceImages);
+    body[model.referenceField ?? "image_urls"] = params.referenceUrls.slice(0, model.maxReferenceImages);
   }
   if (model.maxImages) body.num_images = Math.min(model.maxImages, Math.max(1, params.numImages ?? 1));
   const duration = modelDuration(model, params.durationSeconds);

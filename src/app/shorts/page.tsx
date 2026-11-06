@@ -15,6 +15,7 @@ import { mediaUrl } from "@/lib/production";
 import { evaluateQuality, summarizeQuality } from "@/lib/short-qc";
 import { isShortLocked, scenesLabel } from "@/lib/shorts";
 import { getClaudeConfig } from "@/server/ai/claude";
+import { getOpenAIConfig } from "@/server/ai/openai";
 import { getFfmpegVersion } from "@/server/media/ffmpeg";
 import { shortsConsistency } from "@/server/qc/service";
 import { buildQualityInput, getImportCandidates, listShorts } from "@/server/queries/shorts";
@@ -45,6 +46,7 @@ async function ShortsData() {
   await connection();
   const [rows, candidates, ffmpeg] = await Promise.all([listShorts(), getImportCandidates(), getFfmpegVersion()]);
   const claude = getClaudeConfig();
+  const openai = getOpenAIConfig();
   const consistency = await shortsConsistency(rows.map((r) => r.short));
 
   const groups = new Map<string, { planId: string | null; title: string; rows: typeof rows }>();
@@ -58,7 +60,7 @@ async function ShortsData() {
   return (
     <>
       <PageHeader title={MODULES.shorts.label} description={MODULES.shorts.description} icon={MODULES.shorts.icon}>
-        <AnalyzeAllButton ids={editable} disabled={!claude.configured} />
+        <AnalyzeAllButton ids={editable} disabled={!openai.configured} />
         <MergeScenesButton plans={candidates} />
         <ImportShortsButton plans={candidates} />
       </PageHeader>
@@ -179,13 +181,23 @@ async function ShortsData() {
                 </p>
               )}
               <p>
+                <span className="text-foreground">OpenAI:</span>{" "}
+                {openai.configured ? `configured (${openai.model}).` : "not configured."}
+              </p>
+              {!openai.configured && (
+                <p className="flex items-start gap-2">
+                  <KeyRoundIcon className="mt-0.5 size-4 shrink-0 text-amber-400" />
+                  Add OPENAI_API_KEY to .env.local for analysis and metadata suggestions. You can still write metadata by hand.
+                </p>
+              )}
+              <p>
                 <span className="text-foreground">Claude:</span>{" "}
                 {claude.configured ? `configured (${claude.model}).` : "not configured."}
               </p>
               {!claude.configured && (
                 <p className="flex items-start gap-2">
                   <KeyRoundIcon className="mt-0.5 size-4 shrink-0 text-amber-400" />
-                  Add ANTHROPIC_API_KEY to .env.local for analysis and metadata suggestions. You can still write metadata by hand.
+                  Add ANTHROPIC_API_KEY to .env.local for the publishing order suggestion.
                 </p>
               )}
             </CardContent>
@@ -197,7 +209,7 @@ async function ShortsData() {
             <CardContent>
               <ol className="grid list-decimal gap-1.5 pl-4 text-sm text-muted-foreground">
                 <li>Import approved scene videos (one Short per scene), or merge several scenes of a story into one longer Short.</li>
-                <li>Analyse with Claude: standalone strength, hook, metadata.</li>
+                <li>Analyse with GPT: standalone strength, hook, metadata.</li>
                 <li>Check framing and captions in the live preview, then render 9:16.</li>
                 <li>Fix quality checks, approve the metadata, then approve the Short.</li>
                 <li>Schedule it in the publishing queue and upload by hand.</li>

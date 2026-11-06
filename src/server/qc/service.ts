@@ -285,9 +285,11 @@ export async function runVisionCheck(assetId: string, force = false): Promise<Qc
 
   // Character references (primary first) and the scene's own extra references, capped to keep the call cheap.
   const linked = links.filter((l) => l.sceneId === current.scene.id);
-  const characterRefs = await pickCharacterReferences(linked);
+  const characterRefs = await pickCharacterReferences(linked, current.continuity.referenceAssetIds);
   const sceneRefs = current.continuity.referenceAssetIds.length
-    ? await db.select().from(assets).where(and(inArray(assets.id, current.continuity.referenceAssetIds), ne(assets.status, "rejected")))
+    ? (await db.select().from(assets).where(and(inArray(assets.id, current.continuity.referenceAssetIds), ne(assets.status, "rejected")))).filter(
+        (a) => !characterRefs.some((r) => r.asset.id === a.id),
+      )
     : [];
   const refs = [
     ...characterRefs.map((r) => ({ label: `${r.names.join(" and ")} (character reference)`, asset: r.asset })),

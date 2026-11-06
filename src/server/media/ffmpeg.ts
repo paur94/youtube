@@ -7,7 +7,7 @@ import path from "node:path";
 
 import { buildConcatArgs, type EditSettings, parseProgressSeconds, pickFps, type VideoClip } from "@/lib/long-video";
 import { buildOverlayBurnArgs, buildOverlayImageArgs, overlayLayout, placeOverlays, type SceneOverlay } from "@/lib/overlays";
-import { type AudioLevels, buildJoinArgs, buildRenderArgs, type Framing, type MediaProbe, OUT_H, OUT_W, parseLoudness, parseProbe } from "@/lib/short-video";
+import { type AudioEdit, type AudioLevels, buildJoinArgs, buildRenderArgs, type Framing, type MediaProbe, OUT_H, OUT_W, parseLoudness, parseProbe } from "@/lib/short-video";
 
 import { resolveMediaPath } from "./storage";
 
@@ -109,9 +109,15 @@ export async function renderVertical(input: {
   normalizeAudio: boolean;
   /** Scene text overlays on the source's timeline, laid out in the 1080×1920 frame. */
   overlays: { overlays: SceneOverlay[]; durationSeconds: number; fps: number } | null;
+  /** Muting and background music; `music.filePath` is relative to the media root. */
+  audio?: Omit<AudioEdit, "music"> & { music: { filePath: string; volume: number; duck: boolean } | null };
 }) {
   const relative = `${input.folder}/${input.fileName}`;
   if (relative === input.sourcePath) throw new FfmpegError("Refusing to overwrite the source clip");
+  const audio: AudioEdit | undefined = input.audio && {
+    ...input.audio,
+    music: input.audio.music && { ...input.audio.music, inputPath: absolute(input.audio.music.filePath) },
+  };
   const outputPath = absolute(relative);
   await mkdir(path.dirname(outputPath), { recursive: true });
 
@@ -128,6 +134,7 @@ export async function renderVertical(input: {
       subtitlesFile: input.assSubtitles ? "overlay.ass" : null,
       normalizeAudio: input.normalizeAudio,
       overlays,
+      audio,
     });
     await run(getFfmpegPaths().ffmpeg, args, { cwd: work, timeout: RENDER_TIMEOUT_MS });
     const info = await stat(outputPath);

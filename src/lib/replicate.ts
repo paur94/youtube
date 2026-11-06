@@ -1,9 +1,9 @@
 import type { RemoteStatus } from "./generation-jobs";
 import type { HiggsfieldModel } from "./higgsfield";
 
-// Replicate predictions API (https://replicate.com/docs/reference/http). Only Wan 3.0 is used through it
-// (https://replicate.com/alibaba/wan-3, schema checked November 2026); its models live in HIGGSFIELD_MODELS
-// with provider "replicate" so the model pickers list them alongside Higgsfield's.
+// Replicate predictions API (https://replicate.com/docs/reference/http). Wan 3.0 and Kling 4.0 are used through
+// it (schemas checked November 2026); their models live in HIGGSFIELD_MODELS with provider "replicate" so the
+// model pickers list them alongside Higgsfield's.
 export const REPLICATE_PROVIDER = "replicate";
 
 /** Replicate deletes the outputs of API predictions an hour after they finish. */
@@ -43,7 +43,7 @@ export function replicateToRemoteStatus(prediction: ReplicatePrediction): Remote
   }
 }
 
-/** Replicate bills Wan 3.0 per second of output, so the estimate is computed locally. */
+/** Replicate bills these models per second of output, so the estimate is computed locally. */
 export function estimateReplicateCost(model: HiggsfieldModel, body: Record<string, unknown>) {
   if (!model.usdPerSecond || typeof body.duration !== "number") return null;
   return Math.round(model.usdPerSecond * body.duration * 10_000) / 10_000;

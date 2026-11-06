@@ -22,6 +22,7 @@ import { approvalBlockers, evaluateQuality, summarizeQuality } from "@/lib/short
 import { aspectLabel } from "@/lib/short-video";
 import { formatCaptionLines, isShortLocked, scenesLabel } from "@/lib/shorts";
 import { getClaudeConfig } from "@/server/ai/claude";
+import { getOpenAIConfig } from "@/server/ai/openai";
 import { getFfmpegVersion } from "@/server/media/ffmpeg";
 import { getShortStoryQc, shortConsistency } from "@/server/qc/service";
 import { buildQualityInput, getShort, isRenderCurrent } from "@/server/queries/shorts";
@@ -60,6 +61,7 @@ async function ShortData({ params }: Pick<PageProps<"/shorts/[id]">, "params">) 
   if (!short) notFound();
 
   const claude = getClaudeConfig();
+  const openai = getOpenAIConfig();
   const locked = isShortLocked(short);
   const [consistency, storyQc] = await Promise.all([shortConsistency(short), getShortStoryQc(short)]);
   const checks = evaluateQuality({
@@ -184,7 +186,7 @@ async function ShortData({ params }: Pick<PageProps<"/shorts/[id]">, "params">) 
             </CardDescription>
             <CardAction className="flex flex-wrap gap-2">
               {a && <ApplySuggestionsButton shortId={short.id} disabled={locked} />}
-              <AnalyzeButton shortId={short.id} analyzed={Boolean(a)} disabled={locked || !claude.configured} />
+              <AnalyzeButton shortId={short.id} analyzed={Boolean(a)} disabled={locked || !openai.configured} />
             </CardAction>
           </CardHeader>
           <CardContent>

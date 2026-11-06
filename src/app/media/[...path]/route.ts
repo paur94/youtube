@@ -2,6 +2,7 @@ import { type FileHandle, open, stat } from "node:fs/promises";
 import path from "node:path";
 
 import { MEDIA_TYPES } from "@/lib/production";
+import { MUSIC_TYPES } from "@/lib/shorts";
 import { resolveMediaPath } from "@/server/media/storage";
 
 // Serves stored assets from MEDIA_DIR. Supports Range requests so video previews can seek.
@@ -20,7 +21,8 @@ export async function GET(request: Request, ctx: RouteContext<"/media/[...path]"
   }
 
   const ext = path.extname(file).slice(1).toLowerCase();
-  const contentType = Object.entries(MEDIA_TYPES).find(([, t]) => t.ext === ext)?.[0] ?? "application/octet-stream";
+  const contentType =
+    Object.entries(MEDIA_TYPES).find(([, t]) => t.ext === ext)?.[0] ?? Object.entries(MUSIC_TYPES).find(([, e]) => e === ext)?.[0] ?? "application/octet-stream";
   const headers = {
     "Content-Type": contentType,
     "Accept-Ranges": "bytes",

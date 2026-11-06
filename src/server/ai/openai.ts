@@ -5,10 +5,10 @@ import { z } from "zod";
 import type { TokenUsage } from "@/lib/ai-usage";
 import { storyContentSchema } from "@/lib/stories";
 
-import type { GenerationResult } from "./claude";
+import type { GenerationResult, StructuredResult } from "./claude";
 
 // OpenAI Responses API (https://platform.openai.com/docs/api-reference/responses), used for story
-// generation. Called with fetch: one endpoint, streamed so long stories don't hit HTTP timeouts.
+// generation, Short analysis and video metadata suggestions. Called with fetch: one endpoint, streamed so long stories don't hit HTTP timeouts.
 // The API key is read from the server environment only ("server-only" keeps it out of client bundles).
 
 export const OPENAI_API_URL = "https://api.openai.com/v1";
@@ -16,7 +16,7 @@ export const DEFAULT_OPENAI_MODEL = "gpt-6.1-sol";
 export const OPENAI_EFFORT_LEVELS = ["none", "minimal", "low", "medium", "high", "xhigh"] as const;
 export type OpenAIEffort = (typeof OPENAI_EFFORT_LEVELS)[number];
 
-const MAX_OUTPUT_TOKENS = 64_000;
+const STORY_MAX_OUTPUT_TOKENS = 64_000;
 
 export const OPENAI_NOT_CONFIGURED_MESSAGE =
   "OpenAI is not configured. Add OPENAI_API_KEY to .env.local and restart the dev server.";
@@ -107,19 +107,20 @@ export function describeOpenAIError(status: number | null, model: string, detail
   }
 }
 
-/** Why a finished response has no usable story, or null when it has one. */
-function describeStop(response: OpenAIResponse): string | null {
+/** Why a finished response has no usable output, or null when it has one. */
+function describeStop(response: OpenAIResponse, request: StructuredRequest): string | null {
+  const { subject } = request;
   const refusal = response.output
     ?.flatMap((item) => item.content ?? [])
     .find((part) => part.type === "refusal")?.refusal;
-  if (refusal) return `GPT declined to write this story (${refusal.slice(0, 200)}). Try rewording the brief.`;
+  if (refusal) return `GPT declined to write this ${subject} (${refusal.slice(0, 200)}). ${request.refusalHint ?? "Try again."}`;
   if (response.status === "incomplete") {
     return response.incomplete_details?.reason === "max_output_tokens"
-      ? "The story was cut off before it was finished. Try a shorter target duration."
-      : `GPT stopped before finishing the story (${response.incomplete_details?.reason ?? "incomplete"}). Try again.`;
+      ? `The ${subject} was cut off before it was finished. ${request.cutOffHint ?? "Try again."}`
+      : `GPT stopped before finishing the ${subject} (${response.incomplete_details?.reason ?? "incomplete"}). Try again.`;
   }
   if (response.status === "failed") {
-    return `OpenAI could not generate the story${response.error?.message ? `: ${response.error.message}` : ""}. Try again.`;
+    return `OpenAI could not generate the ${subject}${response.error?.message ? `: ${response.error.message}` : ""}. Try again.`;
   }
   return null;
 }
@@ -173,7 +174,17 @@ type StoryRequest = {
   user: string;
 };
 
-export type OpenAIStoryOptions = {
+type StructuredRequest = StoryRequest & {
+  maxOutputTokens: number;
+  /** Used in messages, e.g. "Short analysis". */
+  subject: string;
+  /** The json_schema format name (letters, digits, _ and - only). */
+  name: string;
+  refusalHint?: string;
+  cutOffHint?: string;
+};
+
+export type OpenAIOptions = {
   apiKey: string;
   fetch?: typeof fetch;
   sleep?: (ms: number) => Promise<void>;
@@ -196,14 +207,35 @@ function isRetryable(status: number | null, detail?: string) {
   return status === 429 && !detail?.toLowerCase().includes("quota");
 }
 
-export async function runOpenAIStoryGeneration(
-  options: OpenAIStoryOptions,
-  request: StoryRequest,
-): Promise<GenerationResult> {
+export async function runOpenAIStoryGeneration(options: OpenAIOptions, request: StoryRequest): Promise<GenerationResult> {
+  const result = await runOpenAIStructuredGeneration(
+    options,
+    {
+      ...request,
+      maxOutputTokens: STORY_MAX_OUTPUT_TOKENS,
+      subject: "story",
+      name: "story",
+      refusalHint: "Try rewording the brief.",
+      cutOffHint: "Try a shorter target duration.",
+    },
+    storyContentSchema,
+  );
+  if (!result.ok) return result;
+  const { data, ...rest } = result;
+  return { ...rest, content: data };
+}
+
+/** One strict structured-output request, validated against a Zod schema. */
+export async function runOpenAIStructuredGeneration<S extends z.ZodType>(
+  options: OpenAIOptions,
+  request: StructuredRequest,
+  schema: S,
+): Promise<StructuredResult<z.infer<S>>> {
+  const { subject } = request;
   const started = Date.now();
   const elapsed = () => Date.now() - started;
   const fetchImpl = options.fetch ?? fetch;
-  const failed = (message: string, usage: TokenUsage | null = null, model = request.model): GenerationResult => ({
+  const failed = (message: string, usage: TokenUsage | null = null, model = request.model): StructuredResult<z.infer<S>> => ({
     ok: false,
     model,
     usage,
@@ -217,12 +249,12 @@ export async function runOpenAIStoryGeneration(
     model: request.model,
     instructions: request.system,
     input: request.user,
-    max_output_tokens: MAX_OUTPUT_TOKENS,
+    max_output_tokens: request.maxOutputTokens,
     reasoning: { effort: request.effort },
     text: {
-      format: { type: "json_schema", name: "story", strict: true, schema: toStrictJsonSchema(storyContentSchema) },
+      format: { type: "json_schema", name: request.name, strict: true, schema: toStrictJsonSchema(schema) },
     },
-    // Stories aren't kept on OpenAI's side; the app stores every revision itself.
+    // Nothing is kept on OpenAI's side; the app stores every result itself.
     store: false,
     stream: true,
   });
@@ -245,7 +277,7 @@ export async function runOpenAIStoryGeneration(
       status = response.status;
       detail = await errorDetail(response);
     } catch (error) {
-      if (attempt >= maxAttempts) console.error("Story generation failed", error);
+      if (attempt >= maxAttempts) console.error(`OpenAI ${subject} failed`, error);
     }
     if (attempt >= maxAttempts || !isRetryable(status, detail)) {
       return failed(describeOpenAIError(status, request.model, detail));
@@ -258,27 +290,29 @@ export async function runOpenAIStoryGeneration(
   try {
     final = await readFinalResponse(response.body);
   } catch (error) {
-    console.error("Story generation stream failed", error);
-    return failed(`The connection to OpenAI broke off while the story was being written. Try again.`);
+    console.error(`OpenAI ${subject} stream failed`, error);
+    return failed(`The connection to OpenAI broke off while the ${subject} was being written. Try again.`);
   }
-  if (!final) return failed("OpenAI ended the response without a story. Try again.");
+  if (!final) return failed(`OpenAI ended the response without a ${subject}. Try again.`);
 
   const usage = toUsage(final.usage);
   const model = final.model ?? request.model;
-  const stopped = describeStop(final);
+  const stopped = describeStop(final, request);
   if (stopped) return failed(stopped, usage, model);
 
   const text = outputText(final);
-  if (!text.trim()) return failed("GPT returned an empty story. Try generating again.", usage, model);
-  let parsed: ReturnType<typeof storyContentSchema.safeParse>;
+  if (!text.trim()) return failed(`GPT returned an empty ${subject}. Try generating again.`, usage, model);
+  const unexpected = `GPT returned the ${subject} in an unexpected format. Try generating again.`;
+  let json: unknown;
   try {
-    parsed = storyContentSchema.safeParse(JSON.parse(text));
+    json = JSON.parse(text);
   } catch {
-    return failed("GPT returned the story in an unexpected format. Try generating again.", usage, model);
+    return failed(unexpected, usage, model);
   }
+  const parsed = schema.safeParse(json);
   if (!parsed.success) {
-    console.error("Story did not match the schema", parsed.error.issues.slice(0, 5));
-    return failed("GPT returned the story in an unexpected format. Try generating again.", usage, model);
+    console.error(`OpenAI ${subject} did not match the schema`, parsed.error.issues.slice(0, 5));
+    return failed(unexpected, usage, model);
   }
-  return { ok: true, model, usage, durationMs: elapsed(), content: parsed.data };
+  return { ok: true, model, usage, durationMs: elapsed(), data: parsed.data as z.infer<S> };
 }

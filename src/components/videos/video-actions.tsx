@@ -211,7 +211,7 @@ export function VideoMetadataForm({
   const [title, setTitle] = useState(values.title);
   const [description, setDescription] = useState(values.description);
   const [hashtags, setHashtags] = useState(values.hashtags.join(" "));
-  // Server-side changes (e.g. Claude's suggestions) bump formKey; resync the controlled fields.
+  // Server-side changes (e.g. GPT's suggestions) bump formKey; resync the controlled fields.
   const [syncedKey, setSyncedKey] = useState(formKey);
   if (syncedKey !== formKey) {
     setSyncedKey(formKey);
@@ -300,14 +300,14 @@ export function SuggestMetadataButton({ videoId, disabled }: { videoId: string; 
     <>
       <Button variant="outline" size="sm" disabled={disabled || pending} onClick={() => setOpen(true)}>
         <SparklesIcon />
-        {pending ? "Writing… (up to a minute)" : "Suggest with Claude"}
+        {pending ? "Writing… (up to a minute)" : "Suggest with GPT"}
       </Button>
       <AlertDialog open={open} onOpenChange={setOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Replace the metadata with Claude&apos;s suggestions?</AlertDialogTitle>
+            <AlertDialogTitle>Replace the metadata with GPT&apos;s suggestions?</AlertDialogTitle>
             <AlertDialogDescription>
-              Claude writes a title, description, hashtags and playlist from the story and scenes. Your current text is replaced and the
+              GPT writes a title, description, hashtags and playlist from the story and scenes. Your current text is replaced and the
               metadata needs approving again.
             </AlertDialogDescription>
           </AlertDialogHeader>

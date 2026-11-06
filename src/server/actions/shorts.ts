@@ -13,6 +13,7 @@ import { approvalBlockers, evaluateQuality } from "@/lib/short-qc";
 import { buildAssFile, computeFraming, type MediaProbe } from "@/lib/short-video";
 import {
   applyPublishOrder,
+  audioSettings,
   buildCaptionsFromDialogue,
   buildMergedCaptions,
   buildYouTubeMetadata,
@@ -42,6 +43,7 @@ import {
   runStructuredGeneration,
   type StructuredResult,
 } from "@/server/ai/claude";
+import { getOpenAIConfig, OPENAI_NOT_CONFIGURED_MESSAGE, runOpenAIStructuredGeneration } from "@/server/ai/openai";
 import { buildPublishOrderPrompt, buildShortAnalysisPrompt } from "@/server/ai/shorts-prompt";
 import { FfmpegError, getFfmpegVersion, joinClips, measureLoudness, probeMedia, renderVertical } from "@/server/media/ffmpeg";
 import { resolveMediaPath } from "@/server/media/storage";
@@ -314,7 +316,7 @@ export async function deleteShort(id: string): Promise<ActionResult> {
   });
 }
 
-// ---------- Claude ----------
+// ---------- AI (analysis: OpenAI, publishing order: Claude) ----------
 
 async function logGeneration(
   values: { shortId?: string; planId?: string | null; kind: string },
@@ -336,14 +338,14 @@ async function logGeneration(
 }
 
 /**
- * Asks Claude whether the scene works as a standalone Short and for a hook, narration, music and
+ * Asks GPT whether the scene works as a standalone Short and for a hook, narration, music and
  * sound suggestions and metadata. Metadata is filled in only when the Short has none of its own yet.
  */
 export async function analyzeShort(id: string): Promise<ActionResult> {
   const shortId = idSchema.safeParse(id);
   if (!shortId.success) return { ok: false, message: "Invalid Short id" };
-  const client = getClaudeClient();
-  if (!client) return { ok: false, message: NOT_CONFIGURED_MESSAGE };
+  const apiKey = process.env.OPENAI_API_KEY?.trim();
+  if (!apiKey) return { ok: false, message: OPENAI_NOT_CONFIGURED_MESSAGE };
 
   let short: Awaited<ReturnType<typeof getShort>>;
   try {
@@ -419,10 +421,10 @@ export async function analyzeShort(id: string): Promise<ActionResult> {
     nextScene: summary(short.nextScene),
   });
 
-  const config = getClaudeConfig();
-  const result = await runStructuredGeneration(
-    client,
-    { ...prompt, model: config.model, effort: config.effort, maxTokens: 16_000, subject: "Short analysis" },
+  const config = getOpenAIConfig();
+  const result = await runOpenAIStructuredGeneration(
+    { apiKey },
+    { ...prompt, model: config.model, effort: config.effort, maxOutputTokens: 16_000, subject: "Short analysis", name: "short_analysis" },
     shortAnalysisSchema,
   );
 
@@ -607,13 +609,33 @@ export async function updateVideoSettings(id: string, settings: unknown): Promis
     const short = await loadShort(shortId.data);
     if (!short) return { ok: false, message: "Short not found" };
     if (isShortLocked(short)) return { ok: false, message: LOCKED };
-    const changed = JSON.stringify(parsed.data) !== JSON.stringify(short.videoSettings);
+    // The music file is only set by the upload route, never by the client.
+    const next = { ...parsed.data, music: short.videoSettings.music ?? null };
+    const changed = JSON.stringify(next) !== JSON.stringify({ ...short.videoSettings, music: short.videoSettings.music ?? null });
     await db
       .update(shorts)
-      .set({ videoSettings: parsed.data, ...(changed ? afterEdit(short.status) : {}) })
+      .set({ videoSettings: next, ...(changed ? afterEdit(short.status) : {}) })
       .where(eq(shorts.id, short.id));
     revalidateShorts(short.id);
     return { ok: true, message: changed ? "Video settings saved. Render again to apply them." : "No changes" };
+  });
+}
+
+/** Removes the background music. The file stays on disk, like other replaced media. */
+export async function removeShortMusic(id: string): Promise<ActionResult> {
+  const shortId = idSchema.safeParse(id);
+  if (!shortId.success) return { ok: false, message: "Invalid Short id" };
+  return guarded("removeShortMusic", async () => {
+    const short = await loadShort(shortId.data);
+    if (!short) return { ok: false, message: "Short not found" };
+    if (isShortLocked(short)) return { ok: false, message: LOCKED };
+    if (!short.videoSettings.music) return { ok: true, message: "No music to remove" };
+    await db
+      .update(shorts)
+      .set({ videoSettings: { ...short.videoSettings, music: null }, ...afterEdit(short.status) })
+      .where(eq(shorts.id, short.id));
+    revalidateShorts(short.id);
+    return { ok: true, message: "Music removed. Render again to apply it." };
   });
 }
 
@@ -709,6 +731,8 @@ export async function renderShort(id: string): Promise<ActionResult> {
     // Measured against the probe saved below, so the render key matches later checks.
     const [{ overlays }] = await withOverlays([{ ...short, sourceProbe: source }]);
     if (overlays.length && !source.durationSeconds) throw new FfmpegError("The source's length couldn't be measured to place its text overlays");
+    const audio = audioSettings(s);
+    if (audio.music && !source.durationSeconds) throw new FfmpegError("The source's length couldn't be measured to fit the music");
 
     const filePath = await renderVertical({
       sourcePath: short.sourceFilePath,
@@ -718,6 +742,12 @@ export async function renderShort(id: string): Promise<ActionResult> {
       assSubtitles: ass,
       normalizeAudio: s.normalizeAudio,
       overlays: overlays.length ? { overlays, durationSeconds: source.durationSeconds!, fps: Math.round(source.fps ?? 30) || 30 } : null,
+      audio: {
+        muteOriginal: audio.muteOriginal,
+        sourceHasAudio: source.hasAudio,
+        music: audio.music && { filePath: audio.music.filePath, volume: audio.musicVolume, duck: audio.duckMusic },
+        durationSeconds: source.durationSeconds ?? 0,
+      },
     });
     const outputProbe = await probeMedia(filePath);
     const outputAudio = outputProbe.hasAudio ? await measureLoudness(filePath).catch(() => null) : null;

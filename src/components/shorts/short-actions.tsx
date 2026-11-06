@@ -174,7 +174,7 @@ export function AnalyzeButton({ shortId, analyzed, disabled }: { shortId: string
   return (
     <Button variant={analyzed ? "outline" : "default"} size="sm" disabled={disabled || pending} onClick={() => run(() => analyzeShort(shortId))}>
       <SparklesIcon />
-      {pending ? "Analysing… (up to a minute)" : analyzed ? "Analyse again" : "Analyse with Claude"}
+      {pending ? "Analysing… (up to a minute)" : analyzed ? "Analyse again" : "Analyse with GPT"}
     </Button>
   );
 }

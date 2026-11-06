@@ -78,6 +78,55 @@ describe("FFmpeg command", () => {
   });
 });
 
+describe("audio edits", () => {
+  const base = { inputPath: "clip.mp4", outputPath: "out.mp4", framing: computeFraming(1280, 720, settings), subtitlesFile: null };
+  const music = { inputPath: "song.mp3", volume: 0.3, duck: true };
+  const graphOf = (args: string[]) => args[args.indexOf("-filter_complex") + 1];
+
+  it("drops the audio track when the clip is muted and there is no music", () => {
+    const args = buildRenderArgs({ ...base, normalizeAudio: true, audio: { muteOriginal: true, sourceHasAudio: true, music: null, durationSeconds: 8 } });
+    expect(args).toContain("-an");
+    expect(args).not.toContain("0:a:0?");
+    expect(args).not.toContain("-af");
+  });
+
+  it("loops the music, cuts it to the clip and ducks it under the voices", () => {
+    const args = buildRenderArgs({ ...base, normalizeAudio: true, audio: { muteOriginal: false, sourceHasAudio: true, music, durationSeconds: 8 } });
+    expect(args.slice(args.indexOf("-stream_loop"), args.indexOf("-stream_loop") + 4)).toEqual(["-stream_loop", "-1", "-i", "song.mp3"]);
+    const graph = graphOf(args);
+    expect(graph).toContain("[1:a]");
+    expect(graph).toContain("volume=0.3,atrim=duration=8");
+    expect(graph).toContain("afade=t=out:st=6.5:d=1.5");
+    expect(graph).toContain("sidechaincompress");
+    expect(graph).toMatch(/amix=inputs=2:duration=first:normalize=0,loudnorm=I=-14.*\[a\]$/);
+    expect(args[args.indexOf("[a]") - 1]).toBe("-map");
+  });
+
+  it("uses only the music when the clip is muted", () => {
+    const args = buildRenderArgs({ ...base, normalizeAudio: false, audio: { muteOriginal: true, sourceHasAudio: true, music, durationSeconds: 8 } });
+    const graph = graphOf(args);
+    expect(graph).not.toContain("[0:a:0]");
+    expect(graph).toContain("[music]alimiter=limit=0.95[a]");
+  });
+
+  it("numbers the music input after the overlay images", () => {
+    const args = buildRenderArgs({
+      ...base,
+      normalizeAudio: false,
+      overlays: { placements: [{ imagePath: "overlay-0.png", x: 0, y: 0, start: 0, end: 2, fadeIn: 0, fadeOut: 0 }], durationSeconds: 8, fps: 30 },
+      audio: { muteOriginal: false, sourceHasAudio: true, music: { ...music, duck: false }, durationSeconds: 8 },
+    });
+    expect(graphOf(args)).toContain("[2:a]");
+    expect(graphOf(args)).not.toContain("sidechaincompress");
+  });
+
+  it("keeps the old command when nothing is edited", () => {
+    const plain = buildRenderArgs({ ...base, normalizeAudio: true });
+    const unedited = buildRenderArgs({ ...base, normalizeAudio: true, audio: { muteOriginal: false, sourceHasAudio: true, music: null, durationSeconds: 8 } });
+    expect(unedited).toEqual(plain);
+  });
+});
+
 describe("joining scene clips", () => {
   it("fits every clip into the first frame, fills missing audio and cuts to exact lengths", () => {
     const args = buildJoinArgs({

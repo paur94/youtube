@@ -234,10 +234,11 @@ export async function loadClipMusic(
 type CharacterRef = { id: string; name: string; primaryReferenceId: string | null };
 
 /**
- * One approved reference image per character (the primary one when set), in the given order.
+ * One approved reference image per character, in the given order: the first of the scene's picked
+ * references that belongs to the character, else its primary one, else its newest.
  * Characters sharing a file (a group keyframe) are grouped so the image is sent once.
  */
-export async function pickCharacterReferences(linked: CharacterRef[]) {
+export async function pickCharacterReferences(linked: CharacterRef[], sceneRefIds: string[] = []) {
   if (!linked.length) return [];
   const approved = await db
     .select()
@@ -256,7 +257,8 @@ export async function pickCharacterReferences(linked: CharacterRef[]) {
   const groups = new Map<string, { names: string[]; asset: (typeof approved)[number] }>();
   for (const c of linked) {
     const own = approved.filter((a) => a.characterId === c.id);
-    const asset = own.find((a) => a.id === c.primaryReferenceId) ?? own[0];
+    const picked = sceneRefIds.map((id) => own.find((a) => a.id === id)).find(Boolean);
+    const asset = picked ?? own.find((a) => a.id === c.primaryReferenceId) ?? own[0];
     if (!asset) continue;
     const key = asset.filePath ?? asset.sourceUrl ?? asset.id;
     const group = groups.get(key);
@@ -400,9 +402,9 @@ export async function submitApiGeneration(options: SubmitOptions): Promise<Servi
 
   let referenceUrls: string[] | undefined;
   if (model.maxReferenceImages) {
-    const refs = (await pickCharacterReferences(loaded.characters)).slice(0, model.maxReferenceImages);
-    // Extra scene references (props, places, keyframes) fill the remaining slots.
     const sceneRefIds = readSceneContinuity(scene.continuity).referenceAssetIds;
+    const refs = (await pickCharacterReferences(loaded.characters, sceneRefIds)).slice(0, model.maxReferenceImages);
+    // Extra scene references (props, places, keyframes) fill the remaining slots.
     const sceneRefs = sceneRefIds.length
       ? (await db.select().from(assets).where(and(inArray(assets.id, sceneRefIds), eq(assets.kind, "image"), ne(assets.status, "rejected"))))
           .filter((a) => !refs.some((r) => r.asset.id === a.id))

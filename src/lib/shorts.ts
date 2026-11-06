@@ -94,9 +94,50 @@ export const videoSettingsSchema = z.object({
   burnCaptions: z.boolean(),
   showHook: z.boolean(),
   normalizeAudio: z.boolean(),
+  // Audio edits. Optional so settings saved before they existed still parse; read them through audioSettings().
+  /** Drops the clip's own sound (its voices and any music baked into it). */
+  muteOriginal: z.boolean().optional(),
+  /** Uploaded background music. Only the upload route sets it: updateVideoSettings keeps the stored value. */
+  music: z.object({ filePath: z.string().min(1), name: z.string().max(200) }).nullable().optional(),
+  /** Music level, 0-1 of its original volume. */
+  musicVolume: z.coerce.number().min(0).max(1).optional(),
+  /** Lowers the music while the clip's own sound plays. */
+  duckMusic: z.boolean().optional(),
 });
 
 export type VideoSettings = z.infer<typeof videoSettingsSchema>;
+
+export const DEFAULT_MUSIC_VOLUME = 0.25;
+
+export function audioSettings(s: VideoSettings) {
+  return {
+    muteOriginal: s.muteOriginal ?? false,
+    music: s.music ?? null,
+    musicVolume: s.musicVolume ?? DEFAULT_MUSIC_VOLUME,
+    duckMusic: s.duckMusic ?? true,
+  };
+}
+
+export const MUSIC_TYPES: Record<string, string> = {
+  "audio/mpeg": "mp3",
+  "audio/mp3": "mp3",
+  "audio/wav": "wav",
+  "audio/x-wav": "wav",
+  "audio/wave": "wav",
+  "audio/mp4": "m4a",
+  "audio/x-m4a": "m4a",
+  "audio/aac": "aac",
+  "audio/ogg": "ogg",
+};
+export const MAX_MUSIC_BYTES = 50 * 1024 * 1024;
+
+/** Returns an error message, or null when the file can be used as background music. */
+export function checkMusicFile(contentType: string, sizeBytes: number) {
+  if (!MUSIC_TYPES[contentType]) return "Use an MP3, WAV, M4A, AAC or OGG audio file";
+  if (sizeBytes === 0) return "The audio file is empty";
+  if (sizeBytes > MAX_MUSIC_BYTES) return "The audio file is larger than 50 MB";
+  return null;
+}
 
 export const DEFAULT_VIDEO_SETTINGS: VideoSettings = {
   zoom: 1,
@@ -129,12 +170,16 @@ export function renderKey(input: {
   overlays?: SceneOverlay[];
 }) {
   const s = input.settings;
+  const audio = audioSettings(s);
   return JSON.stringify({
     source: input.sourceFilePath,
     zoom: s.zoom,
     focusX: s.focusX,
     focusY: s.focusY,
     normalizeAudio: s.normalizeAudio,
+    // Left out when unchanged so renders made before audio edits existed stay current.
+    ...(audio.muteOriginal ? { muteOriginal: true } : {}),
+    ...(audio.music ? { music: [audio.music.filePath, audio.musicVolume, audio.duckMusic] } : {}),
     captions: s.burnCaptions ? input.captions : null,
     hook: s.showHook && input.hook.trim() ? [input.hook.trim(), input.hookSeconds] : null,
     // Left out when there are none so renders made before overlays existed stay current.

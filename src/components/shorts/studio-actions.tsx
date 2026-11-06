@@ -253,7 +253,7 @@ export function AnalyzeAllButton({ ids, disabled }: { ids: string[]; disabled?: 
   return (
     <Button variant="outline" disabled={disabled || progress !== null || ids.length === 0} onClick={() => void runAll()}>
       <SparklesIcon />
-      {progress !== null ? `Analysing ${progress + 1}/${ids.length}…` : `Analyse ${ids.length} with Claude`}
+      {progress !== null ? `Analysing ${progress + 1}/${ids.length}…` : `Analyse ${ids.length} with GPT`}
     </Button>
   );
 }

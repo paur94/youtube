@@ -26,7 +26,7 @@ import {
 } from "@/lib/long-video";
 import { MODULES } from "@/lib/navigation";
 import { mediaUrl } from "@/lib/production";
-import { getClaudeConfig } from "@/server/ai/claude";
+import { getOpenAIConfig } from "@/server/ai/openai";
 import { getFfmpegVersion } from "@/server/media/ffmpeg";
 import { videoConsistency } from "@/server/qc/service";
 import { buildVideoQualityInput, getVideo, isRenderRunning, isVideoRenderCurrent } from "@/server/queries/videos";
@@ -64,7 +64,7 @@ async function VideoData({ params }: Pick<PageProps<"/videos/[id]">, "params">) 
   const [video, ffmpeg] = await Promise.all([getVideo(id), getFfmpegVersion()]);
   if (!video) notFound();
 
-  const claude = getClaudeConfig();
+  const openai = getOpenAIConfig();
   const locked = isVideoLocked(video);
   const checks = evaluateVideoQuality({ ...buildVideoQualityInput(video, Boolean(ffmpeg)), consistency: await videoConsistency(video) });
   const blockers = videoApprovalBlockers(checks, { rendered: Boolean(video.renderFilePath), metadataApproved: Boolean(video.metadataApprovedAt) });
@@ -181,7 +181,7 @@ async function VideoData({ params }: Pick<PageProps<"/videos/[id]">, "params">) 
             <CardTitle>Metadata</CardTitle>
             <CardDescription>{video.metadataApprovedAt ? `Approved ${dateTimeFormat.format(video.metadataApprovedAt)}` : "Not approved yet"}</CardDescription>
             <CardAction>
-              <SuggestMetadataButton videoId={video.id} disabled={locked || !claude.configured} />
+              <SuggestMetadataButton videoId={video.id} disabled={locked || !openai.configured} />
             </CardAction>
           </CardHeader>
           <CardContent>

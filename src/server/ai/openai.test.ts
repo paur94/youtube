@@ -1,9 +1,17 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { z } from "zod";
 
 import { storyContentSchema } from "@/lib/stories";
 import { sampleContent } from "@/test/fixtures";
 
-import { describeOpenAIError, getOpenAIConfig, runOpenAIStoryGeneration, toStrictJsonSchema, toUsage } from "./openai";
+import {
+  describeOpenAIError,
+  getOpenAIConfig,
+  runOpenAIStoryGeneration,
+  runOpenAIStructuredGeneration,
+  toStrictJsonSchema,
+  toUsage,
+} from "./openai";
 
 function sse(events: unknown[]) {
   const text = events.map((e) => `event: x\ndata: ${JSON.stringify(e)}\n\n`).join("");
@@ -158,5 +166,29 @@ describe("runOpenAIStoryGeneration", () => {
     expect(describeOpenAIError(429, "m")).toContain("rate limit");
     expect(describeOpenAIError(404, "gpt-x")).toContain('"gpt-x"');
     expect(describeOpenAIError(null, "m")).toContain("Could not reach");
+  });
+});
+
+describe("runOpenAIStructuredGeneration", () => {
+  it("sends the schema under its own name and returns the parsed data", async () => {
+    const schema = z.object({ title: z.string(), hashtags: z.array(z.string()) });
+    const data = { title: "Hi", hashtags: ["#kids"] };
+    const fetch = vi.fn<typeof globalThis.fetch>(async () =>
+      sse([
+        {
+          type: "response.completed",
+          response: finalResponse({ output: [{ type: "message", content: [{ type: "output_text", text: JSON.stringify(data) }] }] }),
+        },
+      ]),
+    );
+    const result = await runOpenAIStructuredGeneration(
+      { apiKey: "sk-test", fetch },
+      { ...request, maxOutputTokens: 8000, subject: "video metadata", name: "video_metadata" },
+      schema,
+    );
+    expect(result.ok && result.data).toEqual(data);
+    const body = JSON.parse(String(fetch.mock.calls[0][1]?.body));
+    expect(body.max_output_tokens).toBe(8000);
+    expect(body.text.format).toMatchObject({ name: "video_metadata", strict: true, schema: { required: ["title", "hashtags"] } });
   });
 });

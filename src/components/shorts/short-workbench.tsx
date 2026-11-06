@@ -1,16 +1,20 @@
 "use client";
 
-import { DownloadIcon, FilmIcon, RefreshCwIcon, SaveIcon, TriangleAlertIcon, WandSparklesIcon } from "lucide-react";
-import { useId, useState } from "react";
+import { DownloadIcon, FilmIcon, MusicIcon, RefreshCwIcon, SaveIcon, Trash2Icon, TriangleAlertIcon, UploadIcon, WandSparklesIcon } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { useId, useState, useTransition } from "react";
+import { toast } from "sonner";
 
 import { useAction } from "@/components/production/use-action";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { type CaptionCue, parseCaptionLines, validateCaptions, type VideoSettings } from "@/lib/shorts";
+import { mediaUrl } from "@/lib/production";
+import { audioSettings, type CaptionCue, MUSIC_TYPES, parseCaptionLines, validateCaptions, type VideoSettings } from "@/lib/shorts";
 import { computeFraming } from "@/lib/short-video";
 import { cn } from "@/lib/utils";
-import { rebuildCaptions, renderShort, updateCaptions, updateVideoSettings } from "@/server/actions/shorts";
+import { rebuildCaptions, removeShortMusic, renderShort, updateCaptions, updateVideoSettings } from "@/server/actions/shorts";
 
 import { VerticalPreview } from "./vertical-preview";
 
@@ -46,7 +50,10 @@ export function ShortWorkbench(props: WorkbenchProps) {
   const parsed = parseCaptionLines(captionsText);
   const cues: CaptionCue[] = parsed.cues;
   const captionIssues = validateCaptions(cues, props.durationSeconds);
-  const settingsDirty = JSON.stringify(settings) !== JSON.stringify(props.settings);
+  // The music file is saved by its own upload, so it never makes the settings dirty.
+  const comparable = (s: VideoSettings) => JSON.stringify({ ...s, ...audioSettings(s), music: null });
+  const settingsDirty = comparable(settings) !== comparable(props.settings);
+  const audio = { ...audioSettings(settings), music: props.settings.music ?? null };
   const captionsDirty = captionsText !== props.captionsText || reviewed !== props.captionsReviewed;
   const framing = dims ? computeFraming(dims.w, dims.h, settings) : null;
   const set = <K extends keyof VideoSettings>(key: K, value: VideoSettings[K]) => setSettings((s) => ({ ...s, [key]: value }));
@@ -167,7 +174,37 @@ export function ShortWorkbench(props: WorkbenchProps) {
               disabled={props.locked}
               onChange={(v) => set("normalizeAudio", v)}
             />
+            <Toggle
+              label="Mute the clip's own sound (removes voices too)"
+              checked={audio.muteOriginal}
+              disabled={props.locked}
+              onChange={(v) => set("muteOriginal", v)}
+            />
           </div>
+          <MusicPicker shortId={props.shortId} music={audio.music} locked={props.locked} settingsDirty={settingsDirty} />
+          <Slider
+            id={`${id}-music-volume`}
+            label="Music volume"
+            value={Math.round(audio.musicVolume * 100)}
+            min={0}
+            max={100}
+            step={5}
+            format={(v) => `${v}%`}
+            disabled={props.locked || !audio.music}
+            onChange={(v) => set("musicVolume", v / 100)}
+          />
+          <div className="grid gap-2 text-sm">
+            <Toggle
+              label="Lower the music while characters speak"
+              checked={audio.duckMusic}
+              disabled={props.locked || !audio.music || audio.muteOriginal}
+              onChange={(v) => set("duckMusic", v)}
+            />
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Music already mixed into the clip can&apos;t be taken out on its own: muting drops it together with the
+            voices. The new track loops or is cut to the clip&apos;s length and fades in and out. Render to hear the mix.
+          </p>
           <div className="flex flex-wrap justify-end gap-2">
             <Button
               variant="outline"
@@ -304,6 +341,101 @@ function Slider({
         onChange={(e) => onChange(Number(e.target.value))}
         className="accent-primary"
       />
+    </div>
+  );
+}
+
+const MUSIC_ACCEPT = [...Object.keys(MUSIC_TYPES), ...new Set(Object.values(MUSIC_TYPES).map((e) => `.${e}`))].join(",");
+
+/**
+ * Uploads straight away (through a route handler: server actions cap bodies at 1 MB). Waits for the
+ * other settings to be saved: the saved Short remounts the workbench, which would drop unsaved edits.
+ */
+function MusicPicker({
+  shortId,
+  music,
+  locked,
+  settingsDirty,
+}: {
+  shortId: string;
+  music: VideoSettings["music"];
+  locked: boolean;
+  settingsDirty: boolean;
+}) {
+  const saveFirst = settingsDirty ? "Save your changes first" : undefined;
+  const id = useId();
+  const router = useRouter();
+  const [file, setFile] = useState<File | null>(null);
+  // Remounts the file input to clear it after an upload.
+  const [inputKey, setInputKey] = useState(0);
+  const [uploading, startUpload] = useTransition();
+  const [removing, runRemove] = useAction();
+
+  function upload() {
+    if (!file) return;
+    startUpload(async () => {
+      try {
+        const form = new FormData();
+        form.set("music", file);
+        const response = await fetch(`/api/shorts/${shortId}/music`, { method: "POST", body: form });
+        const result: { ok: boolean; message: string } = await response
+          .json()
+          .catch(() => ({ ok: false, message: `Upload failed (HTTP ${response.status})` }));
+        if (result.ok) {
+          toast.success(result.message);
+          setFile(null);
+          setInputKey((k) => k + 1);
+          router.refresh();
+        } else {
+          toast.error(result.message);
+        }
+      } catch {
+        toast.error("Upload failed. Check that the dev server is running and try again.");
+      }
+    });
+  }
+
+  if (music) {
+    return (
+      <div className="grid gap-1.5 text-sm">
+        <div className="flex items-center justify-between gap-2">
+          <p className="flex min-w-0 items-center gap-1.5">
+            <MusicIcon className="size-3.5 shrink-0 text-muted-foreground" />
+            <span className="truncate">{music.name}</span>
+          </p>
+          <Button
+            variant="ghost"
+            size="sm"
+            disabled={locked || removing || settingsDirty}
+            title={saveFirst}
+            onClick={() => runRemove(() => removeShortMusic(shortId))}
+          >
+            <Trash2Icon />
+            Remove
+          </Button>
+        </div>
+        <audio src={mediaUrl(music.filePath)} controls preload="none" className="h-8 w-full" />
+      </div>
+    );
+  }
+
+  return (
+    <div className="grid gap-1.5">
+      <Label htmlFor={`${id}-music`}>Background music (MP3, WAV, M4A, AAC or OGG)</Label>
+      <div className="flex gap-2">
+        <Input
+          key={inputKey}
+          id={`${id}-music`}
+          type="file"
+          accept={MUSIC_ACCEPT}
+          disabled={locked || uploading}
+          onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+        />
+        <Button variant="outline" disabled={locked || uploading || !file || settingsDirty} title={saveFirst} onClick={upload}>
+          <UploadIcon />
+          {uploading ? "Uploading…" : "Add"}
+        </Button>
+      </div>
     </div>
   );
 }

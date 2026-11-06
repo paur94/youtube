@@ -139,11 +139,11 @@ async function ClaudeStatus() {
   return (
     <>
       <Row
-        label="OpenAI API (story writing)"
+        label="OpenAI API (stories, Short analysis, video copy)"
         value={openai.configured ? `Configured · ${openai.model}` : "Not configured (set OPENAI_API_KEY)"}
       />
       <Row
-        label="Claude API (QC, Shorts, video copy)"
+        label="Claude API (QC, publishing order)"
         value={claude.configured ? `Configured · ${claude.model}` : "Not configured (set ANTHROPIC_API_KEY)"}
       />
     </>

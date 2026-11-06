@@ -45,6 +45,40 @@ describe("Replicate Wan 3.0 models", () => {
   });
 });
 
+describe("Replicate Kling 4.0 models", () => {
+  it("sends the start frame as start_image, without aspect_ratio or negative prompt", () => {
+    const body = buildRequestBody(model("replicate-kling-4-i2v"), {
+      prompt: "A fox runs",
+      negativePrompt: "blurry",
+      aspectRatio: "9:16",
+      durationSeconds: 2,
+      imageUrl: "https://api.replicate.com/v1/files/abc",
+    });
+    expect(body).toEqual({
+      prompt: "A fox runs",
+      resolution: "720p",
+      start_image: "https://api.replicate.com/v1/files/abc",
+      duration: 3,
+    });
+  });
+
+  it("sends character references as reference_images", () => {
+    const refs = ["https://x/a.png", "https://x/b.png"];
+    const body = buildRequestBody(model("replicate-kling-4-r2v"), {
+      prompt: "p",
+      aspectRatio: "9:16",
+      durationSeconds: 45,
+      referenceUrls: refs,
+    });
+    expect(body).toEqual({ prompt: "p", resolution: "720p", aspect_ratio: "9:16", reference_images: refs, duration: 30 });
+  });
+
+  it("always generates sound and estimates $0.157 per second at 720p", () => {
+    expect(generatesAudio(model("replicate-kling-4-t2v"))).toBe(true);
+    expect(estimateReplicateCost(model("replicate-kling-4-t2v"), { duration: 10 })).toBe(1.57);
+  });
+});
+
 describe("replicateToRemoteStatus", () => {
   it("maps queue states", () => {
     expect(replicateToRemoteStatus({ id: "p", status: "starting" })).toEqual({ status: "queued" });

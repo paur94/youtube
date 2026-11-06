@@ -31,7 +31,7 @@ import {
 } from "@/lib/long-video";
 import { readOverlays, type SceneOverlay } from "@/lib/overlays";
 import { buildCaptionsFromDialogue, buildYouTubeMetadata, isPublishable, normalizeHashtags, parseCaptionLines, TITLE_MAX } from "@/lib/shorts";
-import { getClaudeClient, getClaudeConfig, NOT_CONFIGURED_MESSAGE, runStructuredGeneration } from "@/server/ai/claude";
+import { getOpenAIConfig, OPENAI_NOT_CONFIGURED_MESSAGE, runOpenAIStructuredGeneration } from "@/server/ai/openai";
 import { buildVideoMetadataPrompt } from "@/server/ai/video-prompt";
 import { FfmpegError, getFfmpegVersion, measureLoudness, probeMedia, renderTimeline } from "@/server/media/ffmpeg";
 import { resolveMediaPath } from "@/server/media/storage";
@@ -475,12 +475,12 @@ export async function setVideoMetadataApproval(id: string, approved: boolean): P
   });
 }
 
-/** Asks Claude for a title, description, hashtags and playlist, replacing the current ones. */
+/** Asks GPT for a title, description, hashtags and playlist, replacing the current ones. */
 export async function suggestVideoMetadata(id: string): Promise<ActionResult> {
   const videoId = idSchema.safeParse(id);
   if (!videoId.success) return { ok: false, message: "Invalid video id" };
-  const client = getClaudeClient();
-  if (!client) return { ok: false, message: NOT_CONFIGURED_MESSAGE };
+  const apiKey = process.env.OPENAI_API_KEY?.trim();
+  if (!apiKey) return { ok: false, message: OPENAI_NOT_CONFIGURED_MESSAGE };
 
   let video: Awaited<ReturnType<typeof getVideo>>;
   let sceneText: Map<string, { action: string; narration: string }>;
@@ -520,10 +520,10 @@ export async function suggestVideoMetadata(id: string): Promise<ActionResult> {
     }),
   });
 
-  const config = getClaudeConfig();
-  const result = await runStructuredGeneration(
-    client,
-    { ...prompt, model: config.model, effort: config.effort, maxTokens: 8_000, subject: "video metadata" },
+  const config = getOpenAIConfig();
+  const result = await runOpenAIStructuredGeneration(
+    { apiKey },
+    { ...prompt, model: config.model, effort: config.effort, maxOutputTokens: 8_000, subject: "video metadata", name: "video_metadata" },
     videoMetadataSuggestionSchema,
   );
 
@@ -555,7 +555,7 @@ export async function suggestVideoMetadata(id: string): Promise<ActionResult> {
       .where(eq(videos.id, video.id));
     revalidateVideos(video.id);
     return m.childSafety.status === "concern"
-      ? { ok: false, message: `Suggestions filled in, but Claude flagged a concern: ${m.childSafety.notes}` }
+      ? { ok: false, message: `Suggestions filled in, but GPT flagged a concern: ${m.childSafety.notes}` }
       : { ok: true, message: "Suggestions filled in. Review and approve the metadata." };
   } catch (error) {
     console.error("suggestVideoMetadata save failed", error);

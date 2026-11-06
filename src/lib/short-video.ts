@@ -93,6 +93,52 @@ export function buildFilterGraph(framing: Framing, subtitlesFile: string | null,
 /** YouTube's recommended loudness target is about -14 LUFS. */
 export const LOUDNESS_TARGET_LUFS = -14;
 
+const LOUDNORM = `loudnorm=I=${LOUDNESS_TARGET_LUFS}:TP=-1.5:LRA=11`;
+const STEREO = "aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo";
+const MUSIC_FADE_IN = 0.5;
+const MUSIC_FADE_OUT = 1.5;
+
+export type AudioEdit = {
+  /** Drop the clip's own sound. */
+  muteOriginal: boolean;
+  sourceHasAudio: boolean;
+  /** Looped or cut to the clip's length, faded in and out. */
+  music: { inputPath: string; volume: number; duck: boolean } | null;
+  durationSeconds: number;
+};
+
+/**
+ * Audio steps for the filter graph, ending in `[a]`, or null when the clip has no sound left.
+ * `musicInput` is the music file's input index.
+ */
+export function buildAudioGraph(audio: AudioEdit, musicInput: number, normalize: boolean) {
+  const keep = audio.sourceHasAudio && !audio.muteOriginal;
+  const finish = normalize ? LOUDNORM : "alimiter=limit=0.95";
+  if (!audio.music) return keep ? [`[0:a:0]${STEREO},${finish}[a]`] : null;
+
+  const d = audio.durationSeconds;
+  const fadeOut = Math.max(0, Math.round((d - MUSIC_FADE_OUT) * 1000) / 1000);
+  const parts = [
+    `[${musicInput}:a]${STEREO},volume=${audio.music.volume},atrim=duration=${d},asetpts=PTS-STARTPTS,` +
+      `afade=t=in:d=${MUSIC_FADE_IN},afade=t=out:st=${fadeOut}:d=${MUSIC_FADE_OUT}[music]`,
+  ];
+  if (!keep) {
+    parts.push(`[music]${finish}[a]`);
+    return parts;
+  }
+  if (audio.music.duck) {
+    // The clip's own sound drives a compressor on the music, so it dips whenever someone speaks.
+    parts.push(
+      `[0:a:0]${STEREO},asplit=2[orig][key]`,
+      "[music][key]sidechaincompress=threshold=0.03:ratio=8:attack=20:release=400[bed]",
+    );
+  } else {
+    parts.push(`[0:a:0]${STEREO}[orig]`, "[music]anull[bed]");
+  }
+  parts.push(`[orig][bed]amix=inputs=2:duration=first:normalize=0,${finish}[a]`);
+  return parts;
+}
+
 export function buildRenderArgs(input: {
   inputPath: string;
   outputPath: string;
@@ -101,10 +147,21 @@ export function buildRenderArgs(input: {
   normalizeAudio: boolean;
   /** Overlay images placed in the 1080×1920 frame; they need the source's length and frame rate. */
   overlays?: { placements: OverlayPlacement[]; durationSeconds: number; fps: number };
+  /** Muting and background music. Without it the clip's sound is copied through as before. */
+  audio?: AudioEdit;
 }) {
   const overlays = input.overlays?.placements.length
     ? buildOverlayGraph({ ...input.overlays, overlays: input.overlays.placements, firstInput: 1, from: "base" })
     : undefined;
+  const edited = input.audio && (input.audio.muteOriginal || input.audio.music);
+  const musicInput = 1 + (overlays?.args.filter((a) => a === "-i").length ?? 0);
+  const audioGraph = edited ? buildAudioGraph(input.audio!, musicInput, input.normalizeAudio) : null;
+  const video = buildFilterGraph(input.framing, input.subtitlesFile, overlays);
+  const audioMap = !edited
+    ? ["-map", "0:a:0?", ...(input.normalizeAudio ? ["-af", LOUDNORM] : [])]
+    : audioGraph
+      ? ["-map", "[a]"]
+      : ["-an"];
   return [
     "-hide_banner",
     "-nostdin",
@@ -112,12 +169,13 @@ export function buildRenderArgs(input: {
     "-i",
     input.inputPath,
     ...(overlays?.args ?? []),
+    // Looped so a short track still covers the whole clip; the graph cuts it to length.
+    ...(edited && input.audio!.music ? ["-stream_loop", "-1", "-i", input.audio!.music.inputPath] : []),
     "-filter_complex",
-    buildFilterGraph(input.framing, input.subtitlesFile, overlays),
+    audioGraph ? [video, ...audioGraph].join(";") : video,
     "-map",
     "[v]",
-    "-map",
-    "0:a:0?",
+    ...audioMap,
     "-c:v",
     "libx264",
     "-preset",
@@ -126,7 +184,6 @@ export function buildRenderArgs(input: {
     "18",
     "-profile:v",
     "high",
-    ...(input.normalizeAudio ? ["-af", `loudnorm=I=${LOUDNESS_TARGET_LUFS}:TP=-1.5:LRA=11`] : []),
     "-c:a",
     "aac",
     "-b:a",
