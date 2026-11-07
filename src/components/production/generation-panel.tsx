@@ -20,16 +20,19 @@ import {
   HIGGSFIELD_WEB_URL,
   modelDuration,
 } from "@/lib/higgsfield";
+import type { ReferenceCandidate } from "@/components/qc/qc-actions";
+import { type SceneFrames, supportsKeyframes } from "@/lib/kling";
 import type { AssetKind } from "@/lib/production";
 import { generateScene, startManualJob } from "@/server/actions/production";
 
 import { CopyButton } from "./copy-button";
 import { HedraPanel } from "./hedra-panel";
 import { ImportAssetDialog } from "./import-asset-dialog";
+import { klingAccepts, KlingFramesPicker, sameFrames } from "./kling-frames";
 import { useAction } from "./use-action";
 
 /** `keyframe` marks this scene's own approved keyframe, as opposed to a last frame or reference. */
-type StartImage = { id: string; label: string; keyframe?: boolean };
+type StartImage = { id: string; label: string; keyframe?: boolean; contentType?: string | null };
 
 // Long model names shrink to the column and truncate instead of overlapping the next field.
 const TRIGGER = "w-full min-w-0 *:data-[slot=select-value]:block *:data-[slot=select-value]:truncate";
@@ -48,6 +51,8 @@ export function GenerationPanel({
   startImages,
   characterReferences,
   sceneReferenceCount,
+  frames,
+  frameCandidates,
   openManualJobs,
 }: {
   sceneId: string;
@@ -68,6 +73,10 @@ export function GenerationPanel({
   characterReferences: { name: string; hasReference: boolean }[];
   /** Extra images picked under "Reference images" for this scene. */
   sceneReferenceCount: number;
+  /** Saved Kling 4.0 middle and end keyframes. */
+  frames: SceneFrames;
+  /** Images that can be keyframes: this story's non-rejected images and approved character references. */
+  frameCandidates: ReferenceCandidate[];
   openManualJobs: { id: string; outputKind: AssetKind; label: string }[];
 }) {
   const available = HIGGSFIELD_MODELS.filter((m) => (m.provider === "replicate" ? replicateConfigured : apiConfigured));
@@ -80,6 +89,7 @@ export function GenerationPanel({
   const [modelId, setModelId] = useState(() => defaultFor("image"));
   const [startAssetId, setStartAssetId] = useState(startImages[0]?.id ?? "");
   const [numImages, setNumImages] = useState("2");
+  const [frameSelection, setFrameSelection] = useState<SceneFrames>(frames);
   const [pending, run] = useAction();
   const id = useId();
 
@@ -89,6 +99,10 @@ export function GenerationPanel({
   const startImage = startImages.find((s) => s.id === startAssetId);
   const activePrompt = kind === "video" ? (needsStart ? videoPrompts.fromImage : videoPrompts.fromText) : prompt;
   const blocked = concerns.length > 0 || !prompt.trim();
+  // Kling keyframes are read from the scene when generating, so unsaved picks must be saved first.
+  const keyframes = supportsKeyframes(model);
+  const framesUnsaved = keyframes && !sameFrames(frameSelection, frames);
+  const startRejectedByKling = keyframes && startImage ? !klingAccepts(startImage.contentType) : false;
 
   function switchKind(next: AssetKind) {
     setKind(next);
@@ -200,6 +214,22 @@ export function GenerationPanel({
                 </span>
               </p>
             )}
+            {startRejectedByKling && (
+              <p className="flex items-start gap-2 text-xs text-rose-300">
+                <TriangleAlertIcon className="mt-0.5 size-3.5 shrink-0" />
+                Kling only accepts JPEG or PNG images; this start image is {startImage?.contentType}. Choose another one.
+              </p>
+            )}
+            {keyframes && needsStart && (
+              <KlingFramesPicker
+                sceneId={sceneId}
+                candidates={frameCandidates}
+                startAssetId={startAssetId}
+                saved={frames}
+                value={frameSelection}
+                onChange={setFrameSelection}
+              />
+            )}
             {model?.maxReferenceImages && (characterReferences.length > 0 || sceneReferenceCount > 0) && (
               <ReferenceNote characters={characterReferences} sceneReferences={sceneReferenceCount} />
             )}
@@ -231,9 +261,15 @@ export function GenerationPanel({
                 {prompt.trim() ? "Fix the prompt issues above first." : "Add a visual prompt first."}
               </p>
             )}
+            {framesUnsaved && (
+              <p className="flex items-start gap-2 text-xs text-amber-300">
+                <TriangleAlertIcon className="mt-0.5 size-3.5 shrink-0" />
+                Save the keyframes above before generating, so the clip uses the images you picked.
+              </p>
+            )}
             <Button
               className="w-fit"
-              disabled={pending || blocked || (needsStart && !startAssetId)}
+              disabled={pending || blocked || (needsStart && !startAssetId) || framesUnsaved || startRejectedByKling}
               onClick={() =>
                 run(() =>
                   generateScene(sceneId, {

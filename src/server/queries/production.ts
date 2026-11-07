@@ -159,6 +159,7 @@ export async function getScene(sceneId: string) {
         .select({
           id: assets.id,
           filePath: assets.filePath,
+          contentType: assets.contentType,
           characterId: assets.characterId,
           characterName: characters.name,
         })

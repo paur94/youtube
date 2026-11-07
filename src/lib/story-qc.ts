@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import type { SceneFrames } from "./kling";
 import type { CheckStatus } from "./short-qc";
 import type { StoryScene } from "./stories";
 
@@ -151,6 +152,8 @@ export type SceneContinuity = {
   corrected?: string[];
   /** Earlier visual prompts, newest first, so automatic corrections can be undone. */
   promptHistory: PromptRevision[];
+  /** Middle and end keyframes for Kling 4.0 clips; see readSceneFrames in ./kling. */
+  frames?: SceneFrames;
 };
 
 export const EMPTY_SCENE_CONTINUITY: SceneContinuity = { referenceAssetIds: [], preflight: null, dismissed: [], promptHistory: [] };

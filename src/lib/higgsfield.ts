@@ -23,6 +23,11 @@ export type HiggsfieldModel = {
   maxReferenceImages?: number;
   /** Body field for the reference images, when it is not image_urls. */
   referenceField?: string;
+  /**
+   * Accepts keyframes besides the start image (Kling 4.0): ordered middle images and an end image, sent in
+   * these body fields. The image rules and the 10-image total live in ./kling.
+   */
+  frames?: { middleField: string; endField: string };
   /** Fixed, documented fields sent with every request. */
   fixedBody?: Record<string, unknown>;
   /** Always generates its own soundtrack; the API has no switch for it. */
@@ -48,9 +53,9 @@ const REPLICATE_WAN_PATH = "/models/alibaba/wan-3/predictions";
 const REPLICATE_WAN_BODY = { resolution: "720p", enable_prompt_expansion: false };
 
 // Kling 4.0 on Replicate (https://replicate.com/kwaivgi/kling-v4.0, schema checked November 2026): one model
-// for text, start frame and reference images, $0.157/s at 720p, 3-30s. It always generates sound (checked on
-// example outputs: AAC track, no switch in the schema). No negative prompt, and aspect_ratio is ignored with
-// a start image.
+// for text, keyframes (start_image, middle_images, end_image) and reference images, $0.157/s at 720p, 3-30s.
+// It always generates sound (checked on example outputs: AAC track, no switch in the schema). No negative
+// prompt, and aspect_ratio is ignored whenever an image is given. Up to 10 images across all image inputs.
 const REPLICATE_KLING_PATH = "/models/kwaivgi/kling-v4.0/predictions";
 const KLING_ASPECT_RATIOS = ["16:9", "9:16", "1:1", "21:9"];
 const REPLICATE_KLING_BODY = { resolution: "720p" };
@@ -149,11 +154,12 @@ export const HIGGSFIELD_MODELS: readonly HiggsfieldModel[] = [
   },
   {
     id: "replicate-kling-4-i2v",
-    label: "Kling 4.0 via Replicate (image to video, 720p, sound, ~$1.57 per 10s)",
+    label: "Kling 4.0 via Replicate (start, middle & end frames to video, 720p, sound, ~$1.57 per 10s)",
     path: REPLICATE_KLING_PATH,
     output: "video",
     input: "image",
     imageField: "start_image",
+    frames: { middleField: "middle_images", endField: "end_image" },
     durationRange: [3, 30],
     supportsNegativePrompt: false,
     fixedBody: REPLICATE_KLING_BODY,
@@ -232,6 +238,10 @@ export type GenerationParams = {
   numImages?: number;
   /** Public URLs of character reference images, in the order the prompt names them. */
   referenceUrls?: string[];
+  /** Keyframes between the start and end image, in order; only models with `frames` send them. */
+  middleImageUrls?: string[];
+  /** Last frame of the clip; only models with `frames` send it. */
+  endImageUrl?: string;
 };
 
 /** The JSON body for a model, using only the fields its documentation lists. */
@@ -240,6 +250,10 @@ export function buildRequestBody(model: HiggsfieldModel, params: GenerationParam
   if (model.input === "image") {
     if (!params.imageUrl) throw new Error(`${model.label} needs a start image`);
     body[model.imageField ?? (model.provider === "replicate" ? "image" : "image_url")] = params.imageUrl;
+  }
+  if (model.frames) {
+    if (params.middleImageUrls?.length) body[model.frames.middleField] = params.middleImageUrls;
+    if (params.endImageUrl) body[model.frames.endField] = params.endImageUrl;
   }
   if (model.aspectRatios) body.aspect_ratio = pickAspectRatio(model.aspectRatios, params.aspectRatio);
   if (model.maxReferenceImages && params.referenceUrls?.length) {

@@ -41,6 +41,14 @@ import {
   modelDuration,
   outputDuration,
 } from "@/lib/higgsfield";
+import {
+  checkKlingImage,
+  checkKlingImageCounts,
+  describeKlingFrames,
+  readImageSize,
+  readSceneFrames,
+  type SceneFrames,
+} from "@/lib/kling";
 import { estimateReplicateCost, REPLICATE_PROVIDER, replicateToRemoteStatus } from "@/lib/replicate";
 import {
   ASPECT_RATIOS,
@@ -328,6 +336,79 @@ async function publicImageUrl(provider: ApiProvider, asset: typeof assets.$infer
   return asset.sourceUrl;
 }
 
+/**
+ * Checks an image against Kling's documented rules (format, size, pixel dimensions, aspect ratio) and uploads
+ * it. The app stores WebP and GIF images too, which Kling rejects, so this runs before any money is spent.
+ * An asset without a local file can only be checked by type; its source URL is sent as is.
+ */
+async function checkedKlingUpload(provider: ApiProvider, asset: Asset, role: string) {
+  const file = asset.filePath ? resolveMediaPath(asset.filePath) : null;
+  const bytes = file ? await readFile(file).catch(() => null) : null;
+  if (bytes && asset.contentType) {
+    const problem = checkKlingImage(
+      { contentType: asset.contentType, sizeBytes: bytes.byteLength, size: readImageSize(new Uint8Array(bytes)) },
+      role,
+    );
+    if (problem) throw new MediaError(problem);
+    return provider.uploadFile(new Uint8Array(bytes), asset.contentType);
+  }
+  if (asset.contentType) {
+    const problem = checkKlingImage({ contentType: asset.contentType, sizeBytes: asset.sizeBytes }, role);
+    if (problem) throw new MediaError(problem);
+  }
+  if (!asset.sourceUrl) throw new MediaError(`The ${role} file is missing`);
+  return asset.sourceUrl;
+}
+
+type PreparedKeyframes = { startUrl: string; middleUrls: string[]; endUrl: string | undefined; promptNote: string };
+
+/**
+ * Loads the scene's saved Kling keyframes, checks them with the start image against the documented limits
+ * and uploads them in order. A keyframe is any non-rejected image of this plan or an approved character
+ * reference, like a scene reference; the start image can't double as a middle or end frame.
+ */
+async function prepareKeyframes(
+  provider: ApiProvider,
+  scene: Pick<ProductionScene, "id" | "planId">,
+  start: Asset,
+  frames: SceneFrames,
+): Promise<PreparedKeyframes | { problem: string }> {
+  const countProblem = checkKlingImageCounts({ start: true, middle: frames.middleAssetIds.length, end: Boolean(frames.endAssetId) });
+  if (countProblem) return { problem: countProblem };
+  const ids = [...frames.middleAssetIds, ...(frames.endAssetId ? [frames.endAssetId] : [])];
+  if (new Set(ids).size !== ids.length) return { problem: "Each keyframe can be used once. Update the frames below." };
+  if (ids.includes(start.id)) return { problem: "The start image can't also be a middle or end frame. Update the frames below." };
+
+  const rows = ids.length
+    ? await db
+        .select({ asset: assets, planId: productionScenes.planId })
+        .from(assets)
+        .leftJoin(productionScenes, eq(assets.sceneId, productionScenes.id))
+        .where(inArray(assets.id, ids))
+    : [];
+  const byId = new Map(rows.map((r) => [r.asset.id, r]));
+  const keyframes = ids.map((id, i) => ({ id, role: i < frames.middleAssetIds.length ? `middle image ${i + 1}` : "end image" }));
+  for (const { id, role } of keyframes) {
+    const row = byId.get(id);
+    if (!row || row.asset.kind !== "image") return { problem: `The ${role} was deleted. Update the frames below.` };
+    if (row.asset.status === "rejected") return { problem: `The ${role} was rejected. Update the frames below.` };
+    const ownImage = row.planId === scene.planId;
+    const characterReference = Boolean(row.asset.characterId) && row.asset.status === "approved";
+    if (!ownImage && !characterReference) return { problem: `The ${role} must be an image from this story or an approved character reference` };
+  }
+
+  const startUrl = await checkedKlingUpload(provider, start, "start image");
+  const urls = await Promise.all(keyframes.map(({ id, role }) => checkedKlingUpload(provider, byId.get(id)!.asset, role)));
+  const middleUrls = urls.slice(0, frames.middleAssetIds.length);
+  const endUrl = frames.endAssetId ? urls[urls.length - 1] : undefined;
+  return {
+    startUrl,
+    middleUrls,
+    endUrl,
+    promptNote: describeKlingFrames({ middle: middleUrls.length, end: Boolean(endUrl) }),
+  };
+}
+
 export type SubmitOptions = {
   sceneId: string;
   modelId: string;
@@ -387,14 +468,26 @@ export async function submitApiGeneration(options: SubmitOptions): Promise<Servi
   if (concerns.length) return { ok: false, message: `Edit the prompt before generating: ${concerns.join(". ")}.` };
 
   let imageUrl: string | undefined;
+  let middleImageUrls: string[] | undefined;
+  let endImageUrl: string | undefined;
   if (model.input === "image") {
     if (!options.startAssetId) return { ok: false, message: `${model.label} needs an approved start image` };
     const [start] = await db.select().from(assets).where(eq(assets.id, options.startAssetId));
     const problem = startImageProblem(start, scene);
     if (problem) return { ok: false, message: problem };
     try {
-      imageUrl = (await publicImageUrl(client, start)) ?? undefined;
-      if (!imageUrl) return { ok: false, message: "The start image file is missing" };
+      if (model.frames) {
+        // Kling keyframes: the saved middle and end images travel with the start image, all checked first.
+        const prepared = await prepareKeyframes(client, scene, start, readSceneFrames(readSceneContinuity(scene.continuity)));
+        if ("problem" in prepared) return { ok: false, message: prepared.problem };
+        imageUrl = prepared.startUrl;
+        middleImageUrls = prepared.middleUrls;
+        endImageUrl = prepared.endUrl;
+        if (prepared.promptNote) prompt = `${prompt}\n\n${prepared.promptNote}`;
+      } else {
+        imageUrl = (await publicImageUrl(client, start)) ?? undefined;
+        if (!imageUrl) return { ok: false, message: "The start image file is missing" };
+      }
     } catch (error) {
       return { ok: false, message: isProviderError(error) ? error.message : "Could not read the start image" };
     }
@@ -442,6 +535,8 @@ ${describeReferenceImages(usable.map((r) => r.names), sceneUrls.length)}`;
     imageUrl,
     numImages: options.numImages,
     referenceUrls,
+    middleImageUrls,
+    endImageUrl,
   });
   const estimate = await client.estimate(body);
   const idempotencyKey = randomUUID();

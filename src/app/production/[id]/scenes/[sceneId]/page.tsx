@@ -20,6 +20,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { HIGGSFIELD_MODELS } from "@/lib/higgsfield";
+import { readSceneFrames } from "@/lib/kling";
 import { MODULES } from "@/lib/navigation";
 import { readOverlays } from "@/lib/overlays";
 import { buildGenerationPrompt, buildVideoPrompt, findPromptConcerns, POLLABLE_JOB_STATUSES } from "@/lib/production";
@@ -134,15 +135,18 @@ async function SceneData({ params }: Pick<Props, "params">) {
         id: a.id,
         label: lastFrameOf(a) !== undefined ? `Last frame of scene ${lastFrameOf(a)} r${a.revision}` : `Scene keyframe r${a.revision}`,
         keyframe: lastFrameOf(a) === undefined,
+        contentType: a.contentType,
       })),
-    ...detail.references.map((r) => ({ id: r.id, label: `${r.characterName} reference` })),
+    ...detail.references.map((r) => ({ id: r.id, label: `${r.characterName} reference`, contentType: r.contentType })),
   ];
   // Picked scene references can be start frames too, even while still awaiting review.
   for (const ref of referenceCandidates.filter((c) => sceneReferenceIds.includes(c.id))) {
     if (startImages.some((s) => s.id === ref.id)) continue;
     const name = ref.group === "This scene" ? `this scene ${ref.label}` : ref.label;
-    startImages.push({ id: ref.id, label: `Reference: ${name}${ref.status === "approved" ? "" : " (needs review)"}` });
+    startImages.push({ id: ref.id, label: `Reference: ${name}${ref.status === "approved" ? "" : " (needs review)"}`, contentType: ref.contentType });
   }
+  // Saved as is: a keyframe rejected or deleted since is shown as missing so it can be removed and re-saved.
+  const frames = readSceneFrames(qc.current.continuity);
   const openManualJobs = detail.jobs
     .filter((j) => j.mode === "manual" && j.status === "awaiting_manual")
     .map((j) => ({ id: j.id, outputKind: j.outputKind, label: `job from ${toJobItem(j).createdAt}` }));
@@ -220,6 +224,8 @@ async function SceneData({ params }: Pick<Props, "params">) {
                 defaults={{ imageModel: plan.imageModel, videoModel: plan.videoModel }}
                 characterReferences={characterReferences}
                 sceneReferenceCount={sceneReferenceIds.length}
+                frames={frames}
+                frameCandidates={referenceCandidates}
                 apiConfigured={higgsfield.configured}
                 replicateConfigured={getReplicateConfig().configured}
                 hedraConfigured={getHedraConfig().configured}

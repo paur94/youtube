@@ -137,6 +137,8 @@ export type ReferenceCandidate = {
   status: AssetStatus;
   filePath: string | null;
   sourceUrl: string | null;
+  /** MIME type of the stored file, so provider-specific pickers can flag formats a model rejects. */
+  contentType?: string | null;
 };
 
 /** Extra reference images for a scene (props, places, keyframes), sent alongside character references. */

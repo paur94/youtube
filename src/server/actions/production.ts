@@ -1,6 +1,6 @@
 "use server";
 
-import { and, asc, eq, isNotNull, ne, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, isNotNull, ne, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { z } from "zod";
@@ -20,6 +20,7 @@ import {
 } from "@/db/schema";
 import { HEDRA_PROVIDER } from "@/lib/hedra";
 import { DEFAULT_IMAGE_MODEL, DEFAULT_VIDEO_MODEL, getHiggsfieldModel } from "@/lib/higgsfield";
+import { checkKlingImageCounts, KLING_MAX_MIDDLE_IMAGES, type SceneFrames } from "@/lib/kling";
 import { isVideoLocked } from "@/lib/long-video";
 import type { SceneOverlay } from "@/lib/overlays";
 import { REPLICATE_PROVIDER } from "@/lib/replicate";
@@ -49,7 +50,7 @@ import {
   syncPlanStatus,
   syncSceneStatus,
 } from "@/server/production/service";
-import { sceneGenerationBlockers, selectionBlocker } from "@/server/qc/service";
+import { sceneGenerationBlockers, selectionBlocker, updateSceneContinuity } from "@/server/qc/service";
 
 import type { ActionResult } from "./ideas";
 
@@ -388,6 +389,54 @@ const generateSchema = z.object({
   startAssetId: z.uuid().nullish(),
   numImages: z.number().int().min(1).max(4).optional(),
 });
+
+const framesSchema = z.object({
+  middleAssetIds: z.array(idSchema).max(KLING_MAX_MIDDLE_IMAGES, `Use at most ${KLING_MAX_MIDDLE_IMAGES} middle images`),
+  endAssetId: idSchema.nullable(),
+});
+
+/**
+ * Saves the scene's Kling 4.0 keyframes (ordered middle images and an optional end image). Like scene
+ * references, a keyframe is any non-rejected image of this story or an approved character reference. The
+ * start image is chosen when generating, so it isn't stored here.
+ */
+export async function setSceneFrames(sceneId: string, frames: SceneFrames): Promise<ActionResult> {
+  const id = idSchema.safeParse(sceneId);
+  const parsed = framesSchema.safeParse(frames);
+  if (!id.success) return { ok: false, message: "Invalid scene id" };
+  if (!parsed.success) return { ok: false, message: parsed.error.issues[0].message };
+  const { middleAssetIds, endAssetId } = parsed.data;
+  const ids = [...middleAssetIds, ...(endAssetId ? [endAssetId] : [])];
+  if (new Set(ids).size !== ids.length) return { ok: false, message: "Each keyframe can be used once" };
+  const countProblem = checkKlingImageCounts({ start: true, middle: middleAssetIds.length, end: Boolean(endAssetId) });
+  if (countProblem) return { ok: false, message: countProblem };
+
+  let planId: string | null;
+  try {
+    planId = await planIdOfScene(id.data);
+    if (!planId) return { ok: false, message: "Scene not found" };
+    if (ids.length) {
+      const rows = await db
+        .select({ id: assets.id, kind: assets.kind, status: assets.status, planId: productionScenes.planId, characterId: assets.characterId })
+        .from(assets)
+        .leftJoin(productionScenes, eq(assets.sceneId, productionScenes.id))
+        .where(inArray(assets.id, ids));
+      const ok = rows.filter(
+        (r) => r.kind === "image" && ((r.planId === planId && r.status !== "rejected") || (r.characterId && r.status === "approved")),
+      );
+      if (ok.length !== ids.length) {
+        return { ok: false, message: "Keyframes must be images from this story that weren't rejected, or approved character references" };
+      }
+    }
+    await updateSceneContinuity(id.data, (c) => ({ ...c, frames: { middleAssetIds, endAssetId } }));
+  } catch (error) {
+    console.error("setSceneFrames failed", error);
+    return { ok: false, message: DB_ERROR };
+  }
+  revalidateProduction(planId, id.data);
+  const count = ids.length;
+  return { ok: true, message: count ? `${count} keyframe${count === 1 ? "" : "s"} saved` : "Keyframes cleared" };
+}
 
 export async function generateScene(sceneId: string, options: z.input<typeof generateSchema>): Promise<ActionResult> {
   const id = idSchema.safeParse(sceneId);

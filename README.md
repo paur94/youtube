@@ -246,6 +246,54 @@ localhost, so it polls instead. There's also no account balance or billing looku
 
 The keys are read only in `src/server/providers/higgsfield.ts`, which imports `server-only`.
 
+### Replicate integration (Wan 3.0 and Kling 4.0)
+
+With `REPLICATE_API_TOKEN` in `.env.local`, the model pickers also list Wan 3.0
+(`alibaba/wan-3`) and Kling 4.0 (`kwaivgi/kling-v4.0`) served by Replicate's predictions API
+(`src/server/providers/replicate.ts`, built only on <https://replicate.com/docs/reference/http>).
+Images are uploaded with `POST /files` right before each submission, so Replicate can read them.
+Both models always generate sound, so the prompt carries the dialogue and no voice-over. Prices are
+Replicate's published per-second rates at 720p (`src/lib/higgsfield.ts`), used for the job estimate.
+
+**Kling 4.0 keyframes (start, middle and end images).** The input schema of
+`kwaivgi/kling-v4.0` (checked November 2026) takes, besides the prompt:
+
+| Field | Meaning |
+| --- | --- |
+| `start_image` | First frame of the clip |
+| `middle_images[]` | Keyframes between the first and last frame, in order |
+| `end_image` | Last frame of the clip |
+| `reference_images[]` | Characters, objects, places or style, not tied to a moment |
+
+Every image must be JPEG or PNG, at most 30 MB, at least 300 px on each side and between 2:5 and 5:2
+in aspect ratio. At most **10 images in total** across all image inputs, and Kling's keyframe mode
+takes at most 8 middle images. Kling numbers the images `@image_1`, `@image_2`, … in the order start,
+middle, end, references, and `aspect_ratio` is ignored whenever an image is sent (the clip takes the
+images' ratio).
+
+In the app, the *Kling 4.0 via Replicate (start, middle & end frames to video)* model shows a
+**Keyframes for Kling 4.0** block in the generation panel:
+
+- **Start image** is the start image chosen above it (an approved keyframe of this scene, a character
+  reference, or a picked scene reference).
+- **Middle images** are added from any non-rejected image of this story or an approved character
+  reference, can be uploaded from the computer (they land in the scene's assets as *Needs review*),
+  reordered with the arrows and removed. The clip passes through them in the listed order.
+- **End image** is optional; without one Kling decides how the clip ends.
+- Each slot is labelled with its `@image_N` number, and the prompt that is sent gets a sentence saying
+  which image is the first frame, which are keyframes in order, and which is the last frame.
+
+Middle and end images are saved on the scene (`production_scenes.continuity.frames`) with *Save
+keyframes*, so the same keyframes are used by retries and by *Regenerate failed* on the plan page;
+the Generate button waits until unsaved picks are saved. Before any money is spent the server checks
+every image (start included) against the rules above, reading the pixel size from the PNG or JPEG
+header, and refuses the request with a specific message otherwise (for example a WebP start image,
+which the app stores but Kling rejects). It also refuses duplicates, a start image reused as a middle
+or end frame, and images that were rejected or deleted since they were saved.
+
+The Kling text-to-video and character-references-to-video entries, and all Wan 3.0 entries, are
+unchanged: they never send `middle_images` or `end_image`.
+
 ### Costs
 
 Before each API submission the app asks Higgsfield's estimate endpoint for a USD price and stores

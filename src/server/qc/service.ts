@@ -620,6 +620,7 @@ export async function getReferenceCandidates(input: { planId: string; sceneId: s
         revision: assets.revision,
         filePath: assets.filePath,
         sourceUrl: assets.sourceUrl,
+        contentType: assets.contentType,
         sceneId: productionScenes.id,
         sceneTitle: productionScenes.title,
         position: productionScenes.position,
@@ -630,7 +631,15 @@ export async function getReferenceCandidates(input: { planId: string; sceneId: s
       .orderBy(asc(productionScenes.position), desc(assets.revision)),
     castIds.length
       ? db
-          .select({ id: assets.id, status: assets.status, revision: assets.revision, filePath: assets.filePath, sourceUrl: assets.sourceUrl, name: characters.name })
+          .select({
+            id: assets.id,
+            status: assets.status,
+            revision: assets.revision,
+            filePath: assets.filePath,
+            sourceUrl: assets.sourceUrl,
+            contentType: assets.contentType,
+            name: characters.name,
+          })
           .from(assets)
           .innerJoin(characters, eq(assets.characterId, characters.id))
           .where(and(inArray(assets.characterId, castIds), eq(assets.kind, "image"), eq(assets.status, "approved")))
@@ -639,17 +648,21 @@ export async function getReferenceCandidates(input: { planId: string; sceneId: s
   ]);
   const own = sceneImages.filter((a) => a.sceneId === input.sceneId);
   const others = sceneImages.filter((a) => a.sceneId !== input.sceneId);
+  const base = (a: { id: string; status: (typeof sceneImages)[number]["status"]; filePath: string | null; sourceUrl: string | null; contentType: string | null }) => ({
+    id: a.id,
+    status: a.status,
+    filePath: a.filePath,
+    sourceUrl: a.sourceUrl,
+    contentType: a.contentType,
+  });
   return [
-    ...own.map((a) => ({ id: a.id, status: a.status, filePath: a.filePath, sourceUrl: a.sourceUrl, group: "This scene", label: `r${a.revision}` })),
+    ...own.map((a) => ({ ...base(a), group: "This scene", label: `r${a.revision}` })),
     ...others.map((a) => ({
-      id: a.id,
-      status: a.status,
-      filePath: a.filePath,
-      sourceUrl: a.sourceUrl,
+      ...base(a),
       group: "Other scenes in this story",
       label: `Scene ${a.position + 1} “${a.sceneTitle}” r${a.revision}`,
     })),
-    ...characterImages.map((a) => ({ id: a.id, status: a.status, filePath: a.filePath, sourceUrl: a.sourceUrl, group: "Characters", label: `${a.name} r${a.revision}` })),
+    ...characterImages.map((a) => ({ ...base(a), group: "Characters", label: `${a.name} r${a.revision}` })),
   ];
 }
 
