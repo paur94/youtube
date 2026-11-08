@@ -23,6 +23,8 @@ export type HiggsfieldModel = {
   maxReferenceImages?: number;
   /** Body field for the reference images, when it is not image_urls. */
   referenceField?: string;
+  /** The prompt refers to the attached images as @image_1, @image_2, ... (Kling 4.0). */
+  imageTags?: boolean;
   /**
    * Accepts keyframes besides the start image (Kling 4.0): ordered middle images and an end image, sent in
    * these body fields. The image rules and the 10-image total live in ./kling.
@@ -165,6 +167,7 @@ export const HIGGSFIELD_MODELS: readonly HiggsfieldModel[] = [
     fixedBody: REPLICATE_KLING_BODY,
     provider: "replicate",
     usdPerSecond: 0.157,
+    imageTags: true,
     nativeAudio: true,
   },
   {
@@ -181,6 +184,7 @@ export const HIGGSFIELD_MODELS: readonly HiggsfieldModel[] = [
     fixedBody: REPLICATE_KLING_BODY,
     provider: "replicate",
     usdPerSecond: 0.157,
+    imageTags: true,
     nativeAudio: true,
   },
   {
@@ -195,6 +199,7 @@ export const HIGGSFIELD_MODELS: readonly HiggsfieldModel[] = [
     fixedBody: REPLICATE_KLING_BODY,
     provider: "replicate",
     usdPerSecond: 0.157,
+    imageTags: true,
     nativeAudio: true,
   },
 ];

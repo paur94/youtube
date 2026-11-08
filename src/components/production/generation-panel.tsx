@@ -358,9 +358,10 @@ export function GenerationPanel({
         <ImportAssetDialog
           target={{ sceneId }}
           origin="computer"
-          label="Upload file"
-          title="Upload a scene asset"
-          description="Choose an image or video from your computer. It's copied into the local media folder and marked “Needs review”."
+          multiple
+          label="Upload files"
+          title="Upload scene assets"
+          description="Choose one or more images or videos from your computer. Each is copied into the local media folder and marked “Needs review”."
         />
       </section>
     </div>

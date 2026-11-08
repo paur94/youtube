@@ -9,6 +9,7 @@ import {
   clipMusicMood,
   describeDialogue,
   describeReferenceImages,
+  AUDIO_QUALITY_RULES,
   DEFAULT_NEGATIVE_PROMPT,
   deriveSceneStatus,
   findPromptConcerns,
@@ -18,6 +19,8 @@ import {
   parseCharacterForm,
   parseSceneForm,
   parseTimeline,
+  IMAGE_QUALITY_RULES,
+  VIDEO_QUALITY_RULES,
   scenesFromStory,
   stripNarration,
   summarizeCosts,
@@ -100,6 +103,7 @@ describe("buildGenerationPrompt", () => {
     expect(prompt).toContain("Pip splashes in a puddle.");
     expect(prompt).toContain("Pip: Small yellow duckling in a blue raincoat.");
     expect(prompt).toContain("Visual style: Soft 3D animation.");
+    expect(prompt.endsWith(IMAGE_QUALITY_RULES)).toBe(true);
   });
 
   it("doesn't repeat a style the prompt already has", () => {
@@ -108,7 +112,7 @@ describe("buildGenerationPrompt", () => {
       characters: [],
       visualStyle: "soft 3d animation, pastel colours",
     });
-    expect(prompt).toBe("Soft 3D animation, pastel colours. A cosy room.");
+    expect(prompt).toBe(`Soft 3D animation, pastel colours. A cosy room.\n\n${IMAGE_QUALITY_RULES}`);
   });
 });
 
@@ -329,24 +333,50 @@ describe("buildVideoPrompt", () => {
     expect(quiet).toContain("No dialogue, no narrator or voice-over. Quiet ambient sound only; no background music.");
   });
 
+  it("keeps Story QC's continuity requirements when the visual prompt is left out for a start image", () => {
+    const visualPrompt = `${scene.visualPrompt}\n\nContinuity requirements:\n- The machine makes exactly two cones, one at a time.`;
+    const prompt = buildVideoPrompt({ ...scene, visualPrompt, startImage: true });
+    expect(prompt).not.toContain("nobody is lying down yet");
+    expect(prompt).toContain("Continuity requirements:\n- The machine makes exactly two cones, one at a time.");
+    expect(prompt.indexOf("Continuity requirements:")).toBeLessThan(prompt.indexOf("Dialogue, spoken word for word"));
+    expect(buildVideoPrompt({ ...scene, startImage: true })).not.toContain("Continuity requirements:");
+    // From text the whole visual prompt is sent, so the block isn't repeated.
+    expect(buildVideoPrompt({ ...scene, visualPrompt, startImage: false }).split("Continuity requirements:")).toHaveLength(2);
+  });
+
+  it("ends every clip prompt with the quality rules, and the audio rules only for a voiced model", () => {
+    for (const startImage of [true, false]) {
+      const voiced = buildVideoPrompt({ ...scene, startImage });
+      expect(voiced.endsWith(`${VIDEO_QUALITY_RULES}
+
+${AUDIO_QUALITY_RULES}`)).toBe(true);
+      expect(voiced).not.toContain(IMAGE_QUALITY_RULES);
+    }
+    const silent = buildVideoPrompt({ ...scene, startImage: true, voiced: false });
+    expect(silent.endsWith(VIDEO_QUALITY_RULES)).toBe(true);
+    expect(silent).not.toContain(AUDIO_QUALITY_RULES);
+  });
+
   describe("music in generated clips", () => {
     const silent = { ...scene, startImage: true, dialogue: [] };
+    // The audio section comes right before the quality rules that close every voiced prompt.
+    const rules = `\n\n${VIDEO_QUALITY_RULES}\n\n${AUDIO_QUALITY_RULES}`;
 
     it('"none" keeps clips free of music, whatever the mood', () => {
       const music = clipMusicMood("none", sampleContent, { position: 0, title: "Rainy morning" });
       expect(music).toBeNull();
       const prompt = buildVideoPrompt({ ...silent, music });
-      expect(prompt.endsWith("No dialogue, no narrator or voice-over. Quiet ambient sound only; no background music.")).toBe(true);
+      expect(prompt.endsWith(`No dialogue, no narrator or voice-over. Quiet ambient sound only; no background music.${rules}`)).toBe(true);
       expect(prompt).not.toContain("Audio:");
       expect(prompt).toBe(buildVideoPrompt(silent));
-      expect(buildVideoPrompt({ ...scene, startImage: true, music })).toMatch(/No background music\.$/);
+      expect(buildVideoPrompt({ ...scene, startImage: true, music }).endsWith(`No background music.${rules}`)).toBe(true);
     });
 
     it('"from music mood" ends the prompt with the scene\'s mood instead of "no background music"', () => {
       const music = clipMusicMood("music_mood", sampleContent, { position: 0, title: "Rainy morning" });
       expect(music).toBe("Light ukulele");
       const prompt = buildVideoPrompt({ ...silent, music });
-      expect(prompt.endsWith("\n\nAudio: Light ukulele, soft and quiet under ambient sounds. No voices, no singing.")).toBe(true);
+      expect(prompt.endsWith(`\n\nAudio: Light ukulele, soft and quiet under ambient sounds. No voices, no singing.${rules}`)).toBe(true);
       expect(prompt).not.toMatch(/no background music/i);
       expect(prompt).toContain("No dialogue, no narrator or voice-over.");
       expect(prompt).not.toContain("Good morning");
@@ -357,7 +387,7 @@ describe("buildVideoPrompt", () => {
       expect(prompt).toContain('Levon says: "Lie on your back." Lip sync.');
       expect(prompt).toContain("No other dialogue. No narrator or voice-over.\n\nAudio: Gentle harp, soft and quiet under the dialogue");
       expect(prompt).not.toMatch(/no background music/i);
-      expect(prompt).toMatch(/No other voices, no singing\.$/);
+      expect(prompt.endsWith(`No other voices, no singing.${rules}`)).toBe(true);
     });
 
     it("falls back to the story's overall mood, and asks silent models for nothing", () => {
@@ -382,6 +412,13 @@ describe("describeReferenceImages", () => {
     expect(text).toContain("image 1 shows Mila");
     expect(text).toContain("Images 2 to 3 show the setting, props and objects");
     expect(describeReferenceImages([], 1)).toMatch(/^Image 1 shows the setting/);
+  });
+
+  it("names the images @image_N for Kling", () => {
+    const text = describeReferenceImages([["Mila"], ["Papa"]], 2, true);
+    expect(text).toContain("@image_1 shows Mila; @image_2 shows Papa");
+    expect(text).toContain("@image_3 and @image_4 show the setting, props and objects");
+    expect(describeReferenceImages([], 1, true)).toMatch(/^@image_1 shows the setting/);
   });
 });
 

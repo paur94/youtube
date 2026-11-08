@@ -173,18 +173,61 @@ export type NewAsset = {
   metadata?: Record<string, unknown>;
 };
 
-/** Inserts an asset as "needs review", completes a linked manual job and updates the scene. */
-export async function addAsset(tx: Tx, asset: NewAsset) {
-  const revision = await nextRevision(tx, asset);
+/**
+ * Swaps the file of an existing asset, keeping its id and revision number so anything pointing at
+ * it (keyframes, picked references) uses the new file. The old file stays in the media folder.
+ */
+async function replaceAsset(tx: Tx, { replacesId, ...asset }: NewAsset & { replacesId: string }) {
+  const owner = asset.sceneId ? eq(assets.sceneId, asset.sceneId) : eq(assets.characterId, asset.characterId!);
   const [row] = await tx
-    .insert(assets)
-    .values({
-      ...asset,
+    .update(assets)
+    .set({
+      jobId: asset.jobId ?? null,
+      kind: asset.kind,
+      source: asset.source,
+      provider: asset.provider,
+      model: asset.model ?? null,
+      filePath: asset.filePath,
+      originalName: asset.originalName ?? null,
+      sourceUrl: asset.sourceUrl ?? null,
+      contentType: asset.contentType ?? null,
+      sizeBytes: asset.sizeBytes ?? null,
       durationSeconds: asset.durationSeconds == null ? null : String(asset.durationSeconds),
+      prompt: asset.prompt ?? null,
+      // The new file needs its own review and vision check.
+      metadata: asset.metadata ?? null,
       status: "pending_review",
-      revision,
+      reviewNotes: null,
+      reviewedAt: null,
+      createdAt: new Date(),
     })
+    .where(and(eq(assets.id, replacesId), owner))
     .returning({ id: assets.id, revision: assets.revision });
+  if (!row) return null;
+  // An asset that isn't approved can't stay the final pick or a primary reference.
+  await tx.update(productionScenes).set({ selectedAssetId: null }).where(eq(productionScenes.selectedAssetId, row.id));
+  await tx.update(characters).set({ primaryReferenceId: null }).where(eq(characters.primaryReferenceId, row.id));
+  return row;
+}
+
+/**
+ * Inserts an asset as "needs review" (or swaps the file of the one it replaces), completes a
+ * linked manual job and updates the scene.
+ */
+export async function addAsset(tx: Tx, asset: NewAsset) {
+  const replaced = asset.replacesId ? await replaceAsset(tx, { ...asset, replacesId: asset.replacesId }) : null;
+  const [row] = replaced
+    ? [replaced]
+    : await tx
+        .insert(assets)
+        .values({
+          ...asset,
+          replacesId: null,
+          durationSeconds: asset.durationSeconds == null ? null : String(asset.durationSeconds),
+          status: "pending_review",
+          revision: await nextRevision(tx, asset),
+        })
+        .returning({ id: assets.id, revision: assets.revision });
 
   if (asset.jobId) {
     await tx
@@ -514,7 +557,7 @@ export async function submitApiGeneration(options: SubmitOptions): Promise<Servi
         referenceUrls = [...usable.map((r) => r.url), ...sceneUrls];
         prompt = `${prompt}
 
-${describeReferenceImages(usable.map((r) => r.names), sceneUrls.length)}`;
+${describeReferenceImages(usable.map((r) => r.names), sceneUrls.length, model.imageTags)}`;
       }
     } catch (error) {
       return {

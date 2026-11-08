@@ -262,9 +262,9 @@ export function AssetCard({
         <ImportAssetDialog
           target={{ sceneId: asset.sceneId }}
           replacesId={asset.id}
-          label="Replace with new revision"
+          label="Replace file"
           title={`Replace revision ${asset.revision}`}
-          description="Imports a new revision. The original is kept and can still be selected."
+          description={`Swaps in the new file as r${asset.revision} and sends it back to review. The old file stays in the media folder.`}
           variant="ghost"
         />
       )}

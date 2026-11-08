@@ -25,6 +25,8 @@ export const QC_CATEGORIES = [
   "speaker",
   "appearance",
   "prop_continuity",
+  "object_logic",
+  "physics",
   "environment",
   "reference",
   "timing",
@@ -42,6 +44,8 @@ export const QC_CATEGORY_LABELS: Record<QcCategory, string> = {
   speaker: "Speakers",
   appearance: "Character appearance",
   prop_continuity: "Props across shots",
+  object_logic: "Where objects come from",
+  physics: "Physics and attachment",
   environment: "Environment",
   reference: "Reference images",
   timing: "Timing",
@@ -731,6 +735,12 @@ export const CORRECTIONS_HEADING = "Continuity requirements:";
 export function stripCorrections(prompt: string) {
   const at = prompt.indexOf(CORRECTIONS_HEADING);
   return at === -1 ? prompt : prompt.slice(0, at).trimEnd();
+}
+
+/** The corrections block of a visual prompt (heading included), or "" when it has none. */
+export function extractCorrections(prompt: string) {
+  const at = prompt.indexOf(CORRECTIONS_HEADING);
+  return at === -1 ? "" : prompt.slice(at).trim();
 }
 
 /**

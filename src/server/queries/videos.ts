@@ -123,7 +123,7 @@ export async function getVideoPublishingQueue() {
     .leftJoin(stories, eq(videos.storyId, stories.id))
     .leftJoin(ideas, eq(stories.ideaId, ideas.id))
     .where(inArray(videos.status, [...QUEUE_STATUSES]))
-    .orderBy(sql`${videos.scheduledAt} asc nulls last`, desc(videos.updatedAt));
+    .orderBy(sql`coalesce(${videos.publishedAt}, ${videos.scheduledAt}) asc nulls last`, desc(videos.updatedAt));
 }
 
 /** A video plus the story language and compliance flags its YouTube metadata needs. */

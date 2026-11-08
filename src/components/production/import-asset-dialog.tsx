@@ -49,6 +49,7 @@ export function ImportAssetDialog({
   description,
   variant = "outline",
   origin = "higgsfield",
+  multiple = false,
 }: {
   target: Target;
   /** Open manual job this file completes. */
@@ -60,10 +61,12 @@ export function ImportAssetDialog({
   variant?: "outline" | "default" | "ghost";
   /** "computer" is for files made outside Higgsfield: file upload only, recorded with the "Upload" provider. */
   origin?: "higgsfield" | "computer";
+  /** Allows picking several files; each is uploaded as its own asset. Not for completing a job or replacing an asset. */
+  multiple?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [mode, setMode] = useState<"file" | "url">("file");
-  const [file, setFile] = useState<File | null>(null);
+  const [files, setFiles] = useState<File[]>([]);
   const [url, setUrl] = useState("");
   const [model, setModel] = useState("");
   const [pending, startTransition] = useTransition();
@@ -71,11 +74,27 @@ export function ImportAssetDialog({
   const id = useId();
   const forScene = Boolean(target.sceneId);
   const fileOnly = !forScene || origin === "computer";
+  const allowMultiple = multiple && !jobId && !replacesId;
 
   function reset() {
-    setFile(null);
+    setFiles([]);
     setUrl("");
     setModel("");
+  }
+
+  async function uploadFile(file: File): Promise<{ ok: boolean; message: string }> {
+    const form = new FormData();
+    form.set("file", file);
+    if (target.sceneId) form.set("sceneId", target.sceneId);
+    if (target.characterId) form.set("characterId", target.characterId);
+    if (jobId) form.set("jobId", jobId);
+    if (replacesId) form.set("replacesId", replacesId);
+    if (model) form.set("model", model);
+    if (forScene) form.set("origin", origin);
+    const duration = await readVideoDuration(file);
+    if (duration) form.set("durationSeconds", String(duration));
+    const response = await fetch("/api/assets", { method: "POST", body: form });
+    return response.json().catch(() => ({ ok: false, message: `Upload failed (HTTP ${response.status})` }));
   }
 
   function submit() {
@@ -84,20 +103,28 @@ export function ImportAssetDialog({
         let result: { ok: boolean; message: string };
         if (mode === "url" && !fileOnly && target.sceneId) {
           result = await importAssetFromUrl({ sceneId: target.sceneId, url, jobId, replacesId, model: model || null });
+        } else if (files.length === 1) {
+          result = await uploadFile(files[0]);
         } else {
-          if (!file) return;
-          const form = new FormData();
-          form.set("file", file);
-          if (target.sceneId) form.set("sceneId", target.sceneId);
-          if (target.characterId) form.set("characterId", target.characterId);
-          if (jobId) form.set("jobId", jobId);
-          if (replacesId) form.set("replacesId", replacesId);
-          if (model) form.set("model", model);
-          if (forScene) form.set("origin", origin);
-          const duration = await readVideoDuration(file);
-          if (duration) form.set("durationSeconds", String(duration));
-          const response = await fetch("/api/assets", { method: "POST", body: form });
-          result = await response.json().catch(() => ({ ok: false, message: `Upload failed (HTTP ${response.status})` }));
+          if (!files.length) return;
+          // Sequential so large clips don't compete for bandwidth and failures are reported per file.
+          const failed: File[] = [];
+          for (const file of files) {
+            const r = await uploadFile(file).catch(() => ({ ok: false, message: "Upload failed" }));
+            if (!r.ok) {
+              failed.push(file);
+              toast.error(`${file.name}: ${r.message}`);
+            }
+          }
+          const done = files.length - failed.length;
+          if (done > 0) router.refresh();
+          if (failed.length) {
+            // Keep only the failed files selected so they can be retried.
+            setFiles(failed);
+            if (done > 0) toast.success(`Imported ${done} of ${files.length} files`);
+            return;
+          }
+          result = { ok: true, message: `Imported ${done} files` };
         }
         if (result.ok) {
           toast.success(result.message);
@@ -154,16 +181,21 @@ export function ImportAssetDialog({
 
           {mode === "file" || fileOnly ? (
             <div className="grid gap-1.5">
-              <Label htmlFor={`${id}-file`}>File</Label>
+              <Label htmlFor={`${id}-file`}>{allowMultiple ? "Files" : "File"}</Label>
               <Input
                 id={`${id}-file`}
                 type="file"
+                multiple={allowMultiple}
                 accept={forScene ? ACCEPT : "image/png,image/jpeg,image/webp"}
-                onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+                onChange={(e) => setFiles(Array.from(e.target.files ?? []).slice(0, allowMultiple ? undefined : 1))}
               />
               <p className="text-xs text-muted-foreground">
                 {forScene ? "PNG, JPEG, WebP, GIF up to 30 MB · MP4, WebM, MOV up to 500 MB" : "PNG, JPEG or WebP up to 30 MB"}
+                {allowMultiple && " each. Select several to upload them together."}
               </p>
+              {files.length > 1 && (
+                <p className="text-xs text-muted-foreground">{files.length} files selected</p>
+              )}
             </div>
           ) : (
             <div className="grid gap-1.5">
@@ -199,8 +231,8 @@ export function ImportAssetDialog({
             <Button variant="outline" onClick={() => setOpen(false)}>
               Cancel
             </Button>
-            <Button disabled={pending || (mode === "file" || fileOnly ? !file : !url.trim())} onClick={submit}>
-              {pending ? "Importing…" : "Import"}
+            <Button disabled={pending || (mode === "file" || fileOnly ? !files.length : !url.trim())} onClick={submit}>
+              {pending ? "Importing…" : files.length > 1 ? `Import ${files.length} files` : "Import"}
             </Button>
           </DialogFooter>
         </DialogContent>

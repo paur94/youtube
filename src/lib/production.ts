@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { MAX_OVERLAYS, sceneOverlaySchema, validateOverlays } from "./overlays";
+import { extractCorrections } from "./story-qc";
 import { parseDialogue, type StoryContent, type StoryScene } from "./stories";
 
 // Shared by the DB schema, server actions, the generation queue and client components.
@@ -199,6 +200,20 @@ export function buildGenerationPrompt(input: {
   characters: PromptCharacter[];
   visualStyle?: string | null;
 }) {
+  return [describeScene(input), IMAGE_QUALITY_RULES].join("\n\n");
+}
+
+/**
+ * Small defects image models keep adding. Written into the prompt because none of the image models
+ * accepts a negative prompt, and a flaw in a keyframe carries into every clip animated from it.
+ */
+export const IMAGE_QUALITY_RULES =
+  "Image quality: clean, sharp, one consistent art style. Every hand has exactly five fingers; no extra, missing or " +
+  "merged limbs; both eyes the same size and shape. Characters are fully inside the frame, never cropped at the head, " +
+  "hands or feet, with room around them to move. Objects have complete, clear shapes and rest on surfaces instead of " +
+  "floating. No text, letters, signs, captions, logos or watermarks anywhere in the image.";
+
+function describeScene(input: { visualPrompt: string; characters: PromptCharacter[]; visualStyle?: string | null }) {
   const parts = [input.visualPrompt.trim()];
   const described = input.characters.filter((c) => c.visualDescription.trim());
   if (described.length) {
@@ -224,7 +239,31 @@ export const DIALOGUE_NEGATIVE_PROMPT =
  * excluding costume changes explicitly.
  */
 export const VIDEO_NEGATIVE_PROMPT =
-  "costume change, outfit change, clothes changing colour, hairstyle change, character turning into someone else, extra people, subtitles, captions, jump cuts, narrator, voice-over";
+  "costume change, outfit change, clothes changing colour, hairstyle change, character turning into someone else, extra people, subtitles, captions, jump cuts, narrator, voice-over, " +
+  "flicker, morphing, melting face, eyes changing size, extra fingers, fused fingers, extra limbs, missing limbs, body passing through objects, " +
+  "sliding feet, floating characters, props appearing or disappearing, props changing shape, background shifting, lighting flicker, " +
+  "text, letters, watermark, logo, sudden zoom, shaky camera, distorted audio, echo, laugh track";
+
+/**
+ * Appended to every video prompt. Most video models (Kling 4.0, Wan 3.0 on Higgsfield) have no negative
+ * prompt, so these small, recurring defects are ruled out in the prompt itself.
+ */
+export const VIDEO_QUALITY_RULES =
+  "Quality throughout the clip: smooth, natural-speed motion with no flicker, warping or morphing. Faces stay stable, " +
+  "eyes the same size, features never melting. Every hand has five fingers; no extra, missing or merged limbs. " +
+  "Bodies and objects never pass through each other, the floor or furniture; feet stay on the ground without sliding " +
+  "or floating. Props keep their shape and colour and stay in the hand holding them. " +
+  "Background and lighting stay the same; nothing in the background moves on its own. Story logic: an object " +
+  "appears only where the action says it comes from, and the number of each object changes only when the action " +
+  "shows it happen (one made means one more, not two). Objects stay separate unless the action joins them: nothing " +
+  "sticks to, merges with or gets carried off by something passing by. Real physics: released balloons rise, dropped " +
+  "things fall, liquids pour down. Characters look at whoever they talk to. One continuous shot with no cuts, flashes, fades or zooms the action doesn't ask for. No text, " +
+  "letters, subtitles, logos or watermarks. The last second is a calm, steady frame, nobody mid-blink or mid-word.";
+
+/** Appended to the prompt of a video model that generates its own sound. */
+export const AUDIO_QUALITY_RULES =
+  "Clean audio: clear voices with no hiss, echo or distortion; each character keeps one voice for the whole clip; " +
+  "only sounds that match what is on screen, no crowd noise or laugh track.";
 
 const NARRATOR = "Narrator";
 
@@ -477,7 +516,7 @@ export function buildVideoPrompt(input: VideoPromptInput) {
   if (input.startImage) {
     parts.push(
       `${style ? `${style}. ` : ""}A ${input.durationSeconds}-second clip that continues from the first-frame image: ` +
-        "keep the characters, their clothes, the room, the camera angle and the art style exactly as in that image from the first second to the last.",
+        "keep the characters, their clothes, the setting, the camera angle and the art style exactly as in that image from the first second to the last.",
     );
     if (names.length) {
       const who = input.characters
@@ -492,7 +531,7 @@ export function buildVideoPrompt(input: VideoPromptInput) {
       );
     }
   } else {
-    parts.push(buildGenerationPrompt({ visualPrompt: input.visualPrompt, characters: input.characters, visualStyle: style }));
+    parts.push(describeScene({ visualPrompt: input.visualPrompt, characters: input.characters, visualStyle: style }));
     parts.push(`A ${input.durationSeconds}-second clip. Outfits, faces and setting stay exactly the same from start to end.`);
   }
 
@@ -510,6 +549,11 @@ export function buildVideoPrompt(input: VideoPromptInput) {
     // Older scenes keep the motion in the visual prompt.
     parts.push(input.visualPrompt.trim());
   }
+  if (input.startImage && action) {
+    // The visual prompt is left out, but the requirements Story QC appended to it are about the clip too
+    // (counts, who holds what, what stays attached), so they travel with the action.
+    parts.push(extractCorrections(input.visualPrompt));
+  }
 
   if (input.voiced) {
     const music = input.music?.replace(/\s+/g, " ").replace(/[\s.,;:!]+$/, "").trim();
@@ -523,6 +567,8 @@ export function buildVideoPrompt(input: VideoPromptInput) {
       parts.push("No dialogue, no narrator or voice-over.", `Audio: ${music}, soft and quiet under ambient sounds. No voices, no singing.`);
     }
   }
+  parts.push(VIDEO_QUALITY_RULES);
+  if (input.voiced) parts.push(AUDIO_QUALITY_RULES);
   return parts.filter(Boolean).join("\n\n");
 }
 
@@ -550,13 +596,15 @@ function joinNames(names: string[]) {
 /**
  * Tells a reference-image model which attached image shows which characters, in upload order.
  * One image can show several characters (e.g. an approved group keyframe). `sceneImages` follow
- * the character images: extra scene references (props, places, an approved keyframe).
+ * the character images: extra scene references (props, places, an approved keyframe). `tagged` names the
+ * images as @image_1, @image_2, ..., the syntax Kling 4.0 documents for referring to its images.
  */
-export function describeReferenceImages(images: string[][], sceneImages = 0) {
+export function describeReferenceImages(images: string[][], sceneImages = 0, tagged = false) {
   if (!images.length && !sceneImages) return "";
+  const name = (n: number) => (tagged ? `@image_${n}` : `image ${n}`);
   const parts: string[] = [];
   if (images.length) {
-    const list = images.map((names, i) => `image ${i + 1} shows ${joinNames(names)}`).join("; ");
+    const list = images.map((names, i) => `${name(i + 1)} shows ${joinNames(names)}`).join("; ");
     parts.push(
       `The attached reference images show the characters: ${list}. ` +
         "Keep each character's face, hair, proportions, colours and outfit exactly as in their reference image, " +
@@ -565,7 +613,14 @@ export function describeReferenceImages(images: string[][], sceneImages = 0) {
   }
   if (sceneImages) {
     const first = images.length + 1;
-    const range = sceneImages === 1 ? `Image ${first} shows` : `Images ${first} to ${first + sceneImages - 1} show`;
+    const last = first + sceneImages - 1;
+    const range = tagged
+      ? sceneImages === 1
+        ? `${name(first)} shows`
+        : `${joinNames(Array.from({ length: sceneImages }, (_, i) => name(first + i)))} show`
+      : sceneImages === 1
+        ? `Image ${first} shows`
+        : `Images ${first} to ${last} show`;
     parts.push(`${range} the setting, props and objects of this scene: keep their shapes, colours and number exactly the same.`);
   }
   return parts.join(" ");

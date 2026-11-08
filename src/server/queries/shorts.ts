@@ -233,7 +233,7 @@ export async function getPublishingQueue() {
     .leftJoin(stories, eq(shorts.storyId, stories.id))
     .leftJoin(ideas, eq(stories.ideaId, ideas.id))
     .where(inArray(shorts.status, [...QUEUE_STATUSES]))
-    .orderBy(sql`${shorts.scheduledAt} asc nulls last`, ...orderBy);
+    .orderBy(sql`coalesce(${shorts.publishedAt}, ${shorts.scheduledAt}) desc nulls last`, ...orderBy);
   const withOv = await withOverlays(rows.map((r) => r.short));
   return rows.map((r, i) => ({ ...r, short: withOv[i] }));
 }
