@@ -588,6 +588,7 @@ export async function startManualJob(sceneId: string, outputKind: string): Promi
               buildVideoPrompt({
                 visualPrompt: row.scene.visualPrompt,
                 action: row.scene.action,
+                setting: row.scene.setting,
                 dialogue: row.scene.dialogue,
                 characters: linked,
                 visualStyle: row.plan.visualStyle,

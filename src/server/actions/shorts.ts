@@ -727,7 +727,7 @@ export async function renderShort(id: string): Promise<ActionResult> {
     const s = short.videoSettings;
     const cues = s.burnCaptions ? short.captions : [];
     const hook = s.showHook && short.hook.trim() ? short.hook : null;
-    const ass = cues.length || hook ? buildAssFile({ cues, hook, hookSeconds: short.hookSeconds, framing }) : null;
+    const ass = cues.length || hook ? buildAssFile({ cues, hook, hookSeconds: short.hookSeconds, framing, captionMargin: s.captionMargin }) : null;
     // Measured against the probe saved below, so the render key matches later checks.
     const [{ overlays }] = await withOverlays([{ ...short, sourceProbe: source }]);
     if (overlays.length && !source.durationSeconds) throw new FfmpegError("The source's length couldn't be measured to place its text overlays");

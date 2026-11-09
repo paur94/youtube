@@ -256,10 +256,21 @@ export function GenerationPanel({
               )}
             </details>
             {blocked && (
-              <p className="flex items-start gap-2 text-xs text-rose-300">
+              <div className="flex items-start gap-2 text-xs text-rose-300">
                 <TriangleAlertIcon className="mt-0.5 size-3.5 shrink-0" />
-                {prompt.trim() ? "Fix the prompt issues above first." : "Add a visual prompt first."}
-              </p>
+                {prompt.trim() ? (
+                  <div>
+                    <p>Fix these before generating:</p>
+                    <ul className="list-disc pl-4">
+                      {concerns.map((c) => (
+                        <li key={c}>{c}</li>
+                      ))}
+                    </ul>
+                  </div>
+                ) : (
+                  "Add a visual prompt first."
+                )}
+              </div>
             )}
             {framesUnsaved && (
               <p className="flex items-start gap-2 text-xs text-amber-300">

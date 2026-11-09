@@ -75,6 +75,15 @@ describe("checkSceneRules", () => {
     expect(categories(scene({ dialogue: [{ character: "Narrator", line: "Once upon a time." }] }))).not.toContain("critical:speaker");
   });
 
+  it("accepts lines said together by characters in the scene, and flags any missing one", () => {
+    const characters = ["Mila", "Zip"].map((name) => ({ name, visualDescription: "a fox", hasReference: true }));
+    for (const character of ["Mila & Zip", "Mila and Zip", "Both"]) {
+      expect(categories(scene({ characters, dialogue: [{ character, line: "Hello!" }] }))).not.toContain("critical:speaker");
+    }
+    const issues = checkSceneRules(scene({ characters, dialogue: [{ character: "Mila & Bo", line: "Hello!" }] }));
+    expect(issues.filter((i) => i.category === "speaker").map((i) => i.message)).toEqual([expect.stringMatching(/^Bo speaks/)]);
+  });
+
   it("flags wardrobe colours that contradict the character sheet or an earlier scene", () => {
     expect(categories(scene({ visualPrompt: "Mila in a blue raincoat walks through the meadow." }))).toContain("critical:appearance");
     const first = scene({ characters: [{ name: "Mila", visualDescription: "a small fox", hasReference: true }], visualPrompt: "Mila wears a green scarf." });

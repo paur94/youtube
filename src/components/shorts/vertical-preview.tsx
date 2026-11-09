@@ -48,7 +48,7 @@ export function VerticalPreview({
 
   const framing = dims ? computeFraming(dims.w, dims.h, settings) : null;
   const unit = boxWidth / OUT_W;
-  const margins = framing ? overlayMargins(framing) : null;
+  const margins = framing ? overlayMargins(framing, settings.captionMargin) : null;
   const cue = settings.burnCaptions ? captions.find((c) => time >= c.start && time < c.end) : undefined;
   const showHook = settings.showHook && hook.trim() && time < hookSeconds;
 

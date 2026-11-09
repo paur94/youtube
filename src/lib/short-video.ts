@@ -281,12 +281,13 @@ export const HOOK_FONT_SIZE = 84;
 
 /**
  * Distance of the captions from the bottom and of the hook from the top (1080×1920 units).
- * Captions sit in the lower blurred band when there is one, clear of YouTube's Shorts controls.
+ * Captions sit in the lower blurred band when there is one, clear of YouTube's Shorts controls,
+ * unless `captionMargin` sets their height.
  */
-export function overlayMargins(framing: Framing) {
+export function overlayMargins(framing: Framing, captionMargin?: number) {
   const lowerBand = OUT_H - (framing.offsetY + framing.visibleH);
   return {
-    captionMargin: framing.fillsFrame || lowerBand < 300 ? 420 : Math.max(380, Math.round(lowerBand * 0.45)),
+    captionMargin: captionMargin ?? (framing.fillsFrame || lowerBand < 300 ? 420 : Math.max(380, Math.round(lowerBand * 0.45))),
     hookMargin: framing.fillsFrame || framing.offsetY < 300 ? 260 : Math.max(220, Math.round(framing.offsetY * 0.4)),
   };
 }
@@ -296,8 +297,9 @@ export function buildAssFile(input: {
   hook: string | null;
   hookSeconds: number;
   framing: Framing;
+  captionMargin?: number;
 }) {
-  const { captionMargin, hookMargin } = overlayMargins(input.framing);
+  const { captionMargin, hookMargin } = overlayMargins(input.framing, input.captionMargin);
 
   const header = [
     "[Script Info]",

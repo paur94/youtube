@@ -216,6 +216,25 @@ export function parseDialogue(text: string): StoryScene["dialogue"] {
     });
 }
 
+// Speaker words that mean everyone in the shot says the line together.
+const CHORUS_WORDS = new Set(["both", "all", "everyone", "together"]);
+
+/**
+ * The characters who say a dialogue line. "Levon & Yana", "Levon and Yana" or "Levon, Yana" is a line
+ * they say together; "Both", "All", "Everyone" or "Together" means all of `cast`. Names that match the
+ * cast take its spelling.
+ */
+export function lineSpeakers(speaker: string, cast: string[] = []) {
+  const name = speaker.trim();
+  if (CHORUS_WORDS.has(name.toLowerCase()) && cast.length > 1) return [...cast];
+  const parts = name
+    .split(/\s*(?:&|\+|,|\band\b)\s*/i)
+    .map((s) => s.trim())
+    .filter(Boolean);
+  if (parts.length < 2) return name ? [name] : [];
+  return [...new Set(parts.map((p) => cast.find((c) => c.toLowerCase() === p.toLowerCase()) ?? p))];
+}
+
 export function parseList(text: string) {
   return text
     .split(",")

@@ -11,8 +11,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { mediaUrl } from "@/lib/production";
-import { audioSettings, type CaptionCue, MUSIC_TYPES, parseCaptionLines, validateCaptions, type VideoSettings } from "@/lib/shorts";
-import { computeFraming } from "@/lib/short-video";
+import { audioSettings, type CaptionCue, MAX_CAPTION_MARGIN, MIN_CAPTION_MARGIN, MUSIC_TYPES, parseCaptionLines, validateCaptions, type VideoSettings } from "@/lib/shorts";
+import { computeFraming, OUT_H, overlayMargins } from "@/lib/short-video";
 import { cn } from "@/lib/utils";
 import { rebuildCaptions, removeShortMusic, renderShort, updateCaptions, updateVideoSettings } from "@/server/actions/shorts";
 
@@ -167,6 +167,37 @@ export function ShortWorkbench(props: WorkbenchProps) {
           )}
           <div className="grid gap-2 text-sm">
             <Toggle label="Burn captions into the video" checked={settings.burnCaptions} disabled={props.locked} onChange={(v) => set("burnCaptions", v)} />
+            {settings.burnCaptions && (
+              <div className="grid gap-1">
+                <Slider
+                  id={`${id}-cpos`}
+                  label="Caption height"
+                  value={framing ? overlayMargins(framing, settings.captionMargin).captionMargin : (settings.captionMargin ?? 420)}
+                  min={MIN_CAPTION_MARGIN}
+                  max={MAX_CAPTION_MARGIN}
+                  step={10}
+                  format={(v) => `${Math.round((v / OUT_H) * 100)}% from the bottom${settings.captionMargin === undefined ? " · auto" : ""}`}
+                  disabled={props.locked}
+                  onChange={(v) => set("captionMargin", v)}
+                />
+                {settings.captionMargin !== undefined && (
+                  <button
+                    type="button"
+                    disabled={props.locked}
+                    onClick={() => set("captionMargin", undefined)}
+                    className="justify-self-start text-xs text-muted-foreground underline hover:text-foreground"
+                  >
+                    Back to automatic
+                  </button>
+                )}
+                {settings.captionMargin !== undefined && settings.captionMargin < 380 && (
+                  <p className="flex items-start gap-1.5 text-xs text-amber-400">
+                    <TriangleAlertIcon className="mt-0.5 size-3.5 shrink-0" />
+                    YouTube&apos;s Shorts title and buttons may cover captions this low.
+                  </p>
+                )}
+              </div>
+            )}
             <Toggle label="Show the hook text at the start" checked={settings.showHook} disabled={props.locked} onChange={(v) => set("showHook", v)} />
             <Toggle
               label="Normalise loudness to about -14 LUFS (YouTube's level)"

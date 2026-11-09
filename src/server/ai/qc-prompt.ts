@@ -65,7 +65,7 @@ Check, frame by frame:
 - Every object or place the dialogue or narration talks about is visible when it's mentioned; counts match exactly (count the objects you can see).
 - Left/right/up/down directions match.
 - Object logic and physics: count each object in every frame and check that any change has a cause the script shows (one ice cream made means at most one child holds one); objects are attached to, held by or free of exactly what the script says (a free balloon is not stuck to a passing drone); nothing floats, falls or merges against the script.
-- The speaking character is the one shown speaking (mouth open/animated); listeners don't appear to talk.
+- The speaking character is the one shown speaking (mouth open/animated); listeners don't appear to talk. A line given to several characters ("Levon & Yana: ...", "Both: ...") is said together, so all of them speak at once.
 - Characters match their reference images: face, fur/hair, proportions, outfit and colours; props and environments match the continuity bible and stay the same from frame to frame (nothing appears, disappears or changes colour without a reason).
 - Visual quality problems a child would notice: extra or missing limbs, melted faces, garbled text, sudden morphing.
 - The thumbnail frame (the first frame given) is not black, blurry or mid-transition and shows the main character or subject.

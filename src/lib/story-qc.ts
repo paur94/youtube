@@ -2,7 +2,7 @@ import { z } from "zod";
 
 import type { SceneFrames } from "./kling";
 import type { CheckStatus } from "./short-qc";
-import type { StoryScene } from "./stories";
+import { lineSpeakers, type StoryScene } from "./stories";
 
 // Story-to-video quality control, shared by the server (gates, prompts) and client components.
 //
@@ -527,7 +527,7 @@ export function checkSceneRules(scene: QcScene, earlier: QcScene[] = []): QcIssu
   const missingSpeakers = [
     ...new Set(
       scene.dialogue
-        .map((d) => d.character.trim())
+        .flatMap((d) => lineSpeakers(d.character, castNames))
         .filter((n) => n && n.toLowerCase() !== NARRATOR && !cast.has(n.toLowerCase())),
     ),
   ];

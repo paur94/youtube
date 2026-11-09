@@ -85,6 +85,9 @@ export function mergedTitle(titles: string[]) {
 
 // ---------- Video settings ----------
 
+export const MIN_CAPTION_MARGIN = 60;
+export const MAX_CAPTION_MARGIN = 1500;
+
 export const videoSettingsSchema = z.object({
   /** 1 = whole source frame visible (letterboxed on a blurred background); higher crops in. */
   zoom: z.coerce.number().min(1).max(4),
@@ -93,6 +96,8 @@ export const videoSettingsSchema = z.object({
   focusY: z.coerce.number().min(0).max(100),
   burnCaptions: z.boolean(),
   showHook: z.boolean(),
+  /** Burned-in captions' distance from the bottom (1080×1920 units). Unset = placed automatically. */
+  captionMargin: z.coerce.number().int().min(MIN_CAPTION_MARGIN).max(MAX_CAPTION_MARGIN).optional(),
   normalizeAudio: z.boolean(),
   // Audio edits. Optional so settings saved before they existed still parse; read them through audioSettings().
   /** Drops the clip's own sound (its voices and any music baked into it). */
@@ -181,6 +186,8 @@ export function renderKey(input: {
     ...(audio.muteOriginal ? { muteOriginal: true } : {}),
     ...(audio.music ? { music: [audio.music.filePath, audio.musicVolume, audio.duckMusic] } : {}),
     captions: s.burnCaptions ? input.captions : null,
+    // Left out when automatic so renders made before it existed stay current.
+    ...(s.burnCaptions && s.captionMargin !== undefined ? { captionMargin: s.captionMargin } : {}),
     hook: s.showHook && input.hook.trim() ? [input.hook.trim(), input.hookSeconds] : null,
     // Left out when there are none so renders made before overlays existed stay current.
     ...(input.overlays?.length ? { overlays: input.overlays } : {}),

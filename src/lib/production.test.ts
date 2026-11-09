@@ -21,6 +21,7 @@ import {
   parseTimeline,
   IMAGE_QUALITY_RULES,
   VIDEO_QUALITY_RULES,
+  videoQualityRules,
   scenesFromStory,
   stripNarration,
   summarizeCosts,
@@ -223,6 +224,23 @@ describe("describeDialogue", () => {
     expect(text).toContain("spoken word for word at the second given");
   });
 
+  it("has lines given to several characters said together, in unison", () => {
+    const text = describeDialogue(
+      [
+        { character: "Levon", line: "Ready?" },
+        { character: "levon & Yana", line: "2-4s: Let's go!" },
+        { character: "Both", line: "Hooray!" },
+      ],
+      ["Levon", "Yana", "Zip"],
+    );
+    const lines = text.split("\n");
+    expect(lines[1]).toBe(`[2-4s] Levon and Yana say together, in unison: "Let's go!" Lip sync, both their mouths move at the same time. Zip's mouth stays closed.`);
+    expect(lines[2]).toBe(`Levon says: "Ready?" Lip sync. Yana and Zip keep their mouths closed.`);
+    expect(lines[3]).toContain(`say together, in unison: "Hooray!" Lip sync, all their mouths move at the same time.`);
+    expect(text).toContain("a line marked together is said by them at once");
+    expect(text).not.toContain("Only one character speaks at a time");
+  });
+
   it("is empty when the scene has no dialogue", () => {
     expect(describeDialogue([])).toBe("");
   });
@@ -255,7 +273,7 @@ describe("stripNarration", () => {
 describe("parseTimeline", () => {
   it("reads timed beats in the usual spellings and keeps untimed lines around them", () => {
     const timeline = parseTimeline(
-      "Static camera.\n0-3s: wave\r\n3 – 7 s: lie back\n[7-10s] legs up\nShot 4 (0:10-0:13): hold\nNo text.",
+      "Static camera.\n0-3s: wave\r\n3 – 7 s: lie back\n[7-10s] legs up\nShot 4 (0:10-0:13): hold\nBeat 5 [13-15s]: smile\nNo text.",
     );
     expect(timeline.preamble).toEqual(["Static camera."]);
     expect(timeline.segments).toEqual([
@@ -263,6 +281,7 @@ describe("parseTimeline", () => {
       { start: 3, end: 7, text: "lie back" },
       { start: 7, end: 10, text: "legs up" },
       { start: 10, end: 13, text: "hold" },
+      { start: 13, end: 15, text: "smile" },
     ]);
     expect(timeline.notes).toEqual(["No text."]);
   });
@@ -300,13 +319,24 @@ describe("buildVideoPrompt", () => {
     expect(prompt).not.toContain("black T-shirt");
     expect(prompt).not.toContain("pink heart");
     expect(prompt).not.toContain("nobody is lying down yet");
-    expect(prompt).toContain("Shot 1 [0-3s]: Both wave.\n");
-    expect(prompt).toContain("Shot 2 [3-7s]: Levon says 'Lie on your back' and lies flat on the green mat.");
+    expect(prompt).toContain("Beat 1 [0-3s]: Both wave.\n");
+    expect(prompt).toContain("Beat 2 [3-7s]: Levon says 'Lie on your back' and lies flat on the green mat.");
+    expect(prompt).not.toMatch(/\bShot \d/);
     expect(prompt).not.toContain("Good morning");
     expect(prompt).not.toMatch(/Narrator:|Voice-over:/);
     expect(prompt).toContain(`[3-7s] Levon says: "Lie on your back." Lip sync. Yana's mouth stays closed.`);
     expect(prompt).toContain("No narrator or voice-over.");
-    expect(prompt.indexOf("Shot 1")).toBeLessThan(prompt.indexOf("Dialogue, spoken word for word"));
+    expect(prompt.indexOf("Beat 1")).toBeLessThan(prompt.indexOf("Dialogue, spoken word for word"));
+  });
+
+  it("ends the style sentence with one period when the plan style already has one", () => {
+    const style = "Soft 3D animation, children on exercise mats.";
+    const fromImage = buildVideoPrompt({ ...scene, visualStyle: style, startImage: true });
+    expect(fromImage.startsWith("Soft 3D animation, children on exercise mats. A 30-second clip")).toBe(true);
+    expect(fromImage).not.toContain("..");
+    const fromText = buildVideoPrompt({ ...scene, visualStyle: style, startImage: false });
+    expect(fromText).toContain("Visual style: Soft 3D animation, children on exercise mats.\n");
+    expect(fromText).not.toContain("..");
   });
 
   it("from text keeps the visual prompt and the character bible, since there is no image to lock to", () => {
@@ -314,7 +344,7 @@ describe("buildVideoPrompt", () => {
     expect(prompt).toContain("Both children sit upright on their mats");
     expect(prompt).toContain("Keep these characters exactly consistent: Levon: Slim 5-year-old boy");
     expect(prompt).toContain("Visual style: Soft 3D animation, pastel colours.");
-    expect(prompt).toContain("Shot 1 [0-3s]: Both wave.");
+    expect(prompt).toContain("Beat 1 [0-3s]: Both wave.");
     expect(prompt).toContain("Outfits, faces and setting stay exactly the same from start to end.");
   });
 
@@ -355,6 +385,78 @@ ${AUDIO_QUALITY_RULES}`)).toBe(true);
     const silent = buildVideoPrompt({ ...scene, startImage: true, voiced: false });
     expect(silent.endsWith(VIDEO_QUALITY_RULES)).toBe(true);
     expect(silent).not.toContain(AUDIO_QUALITY_RULES);
+  });
+
+  it("adds the balloon, falling, liquid and prop rules only when the scene mentions them", () => {
+    // Children on mats: general contact rule, no props or physics lines.
+    const mats = buildVideoPrompt({ ...scene, startImage: true });
+    expect(mats).toContain("Hands, feet and bodies resting on the ground or mat don't slide or float; a limb or the hips leave the surface only when the action says so.");
+    expect(mats).toContain("never pass through each other or any surface.");
+    expect(mats).not.toContain("feet stay on the ground");
+    expect(mats).not.toContain("the floor or furniture");
+    expect(mats).not.toContain("balloon");
+    expect(mats).not.toContain("Real physics");
+    expect(mats).not.toContain("Props keep their shape");
+    expect(mats).not.toContain("an object appears only where");
+    expect(mats).toContain("nothing sticks to, merges with or gets carried off");
+    expect(VIDEO_QUALITY_RULES).not.toContain("Real physics");
+
+    const balloon = buildVideoPrompt({ ...scene, startImage: true, action: "0-3s: Yana lets go of her red balloon." });
+    expect(balloon).toContain("Real physics: released balloons rise.");
+    expect(balloon).toContain("Props keep their shape and colour and stay in the hand holding them.");
+    expect(balloon).not.toContain("thrown things fall"); // "balloon" is not "ball"
+
+    const juice = buildVideoPrompt({ ...scene, startImage: true, setting: "A kitchen table with a jug of juice." });
+    expect(juice).toContain("Real physics: liquids pour down and stay in their containers.");
+
+    const ball = buildVideoPrompt({ ...scene, startImage: true, dialogue: [{ character: "Levon", line: "Catch the ball!" }] });
+    expect(ball).toContain("Real physics: dropped or thrown things fall naturally.");
+
+    const held = buildVideoPrompt({ ...scene, startImage: true, visualPrompt: "Levon holds a blue book. No text." });
+    expect(held).toContain("Props keep their shape and colour");
+    expect(held).toContain("Story logic: an object appears only where the action says it comes from");
+    expect(held).not.toContain("Real physics");
+
+    const everything = buildVideoPrompt({ ...scene, startImage: true, action: "Levon pours water, then throws a ball at a balloon." });
+    expect(everything).toContain("Real physics: released balloons rise; dropped or thrown things fall naturally; liquids pour down and stay in their containers.");
+  });
+
+  it("ignores what a scene says is absent", () => {
+    const none = (text: string) => {
+      const rules = videoQualityRules(text);
+      expect(rules, text).not.toContain("Real physics");
+      expect(rules, text).not.toContain("Props keep their shape");
+      expect(rules, text).not.toContain("an object appears only where");
+    };
+    none("A quiet park lawn, no roads, water, or people.");
+    none("No falls, strain, props or other people.");
+    none("Levon kneels, holding nothing.");
+    none("Two children on mats, no extra props.");
+    none("Levon doesn't drop anything.");
+
+    // The exercise-mats scene: setting, action and visual prompt each name what is missing.
+    const mats = buildVideoPrompt({
+      ...scene,
+      startImage: true,
+      setting: "A sunny lawn with exercise mats, no roads, water, equipment, or other people visible",
+      action: "0-3s: Both lie on their backs.\n3-7s: They lift their legs slowly. No falls, strain, props or other people.",
+      visualPrompt: "Levon lies on the green mat holding nothing; no toys or extra props. No text.",
+    });
+    expect(mats).not.toContain("Real physics");
+    expect(mats).not.toContain("Props keep their shape");
+  });
+
+  it("still adds the rules for what a scene does show", () => {
+    expect(videoQualityRules("Levon pours juice.")).toContain("Real physics: liquids pour down and stay in their containers.");
+    const ball = videoQualityRules("She drops the ball.");
+    expect(ball).toContain("Real physics: dropped or thrown things fall naturally.");
+    expect(ball).toContain("Props keep their shape");
+    expect(ball).toContain("an object appears only where the action says it comes from");
+    const balloon = videoQualityRules("Yana, holding a red balloon, smiles.");
+    expect(balloon).toContain("Real physics: released balloons rise.");
+    expect(balloon).toContain("Props keep their shape");
+    // A negation ends with its clause, so a later clause still counts.
+    expect(videoQualityRules("No pan or zoom; Levon throws the ball.")).toContain("dropped or thrown things fall naturally");
   });
 
   describe("music in generated clips", () => {

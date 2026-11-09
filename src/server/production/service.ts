@@ -494,6 +494,7 @@ export async function submitApiGeneration(options: SubmitOptions): Promise<Servi
     prompt = buildVideoPrompt({
       visualPrompt: scene.visualPrompt,
       action: scene.action,
+      setting: scene.setting,
       dialogue: scene.dialogue,
       characters: loaded.characters,
       visualStyle: plan.visualStyle,

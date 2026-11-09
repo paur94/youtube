@@ -2,7 +2,7 @@ import { z } from "zod";
 
 import { MAX_OVERLAYS, sceneOverlaySchema, validateOverlays } from "./overlays";
 import { extractCorrections } from "./story-qc";
-import { parseDialogue, type StoryContent, type StoryScene } from "./stories";
+import { lineSpeakers, parseDialogue, type StoryContent, type StoryScene } from "./stories";
 
 // Shared by the DB schema, server actions, the generation queue and client components.
 export const PLAN_STATUSES = ["planning", "in_production", "ready_for_assembly"] as const;
@@ -213,6 +213,11 @@ export const IMAGE_QUALITY_RULES =
   "hands or feet, with room around them to move. Objects have complete, clear shapes and rest on surfaces instead of " +
   "floating. No text, letters, signs, captions, logos or watermarks anywhere in the image.";
 
+/** Text without its closing punctuation, for a sentence that adds its own. */
+function unpunctuated(text: string) {
+  return text.trim().replace(/[.!?\u2026\s]+$/, "");
+}
+
 function describeScene(input: { visualPrompt: string; characters: PromptCharacter[]; visualStyle?: string | null }) {
   const parts = [input.visualPrompt.trim()];
   const described = input.characters.filter((c) => c.visualDescription.trim());
@@ -224,7 +229,7 @@ function describeScene(input: { visualPrompt: string; characters: PromptCharacte
   }
   const style = input.visualStyle?.trim();
   if (style && !input.visualPrompt.toLowerCase().includes(style.toLowerCase())) {
-    parts.push(`Visual style: ${style}.`);
+    parts.push(`Visual style: ${unpunctuated(style)}.`);
   }
   return parts.filter(Boolean).join("\n\n");
 }
@@ -244,21 +249,60 @@ export const VIDEO_NEGATIVE_PROMPT =
   "sliding feet, floating characters, props appearing or disappearing, props changing shape, background shifting, lighting flicker, " +
   "text, letters, watermark, logo, sudden zoom, shaky camera, distorted audio, echo, laugh track";
 
+// Scene text that calls for a physics or prop rule (see videoQualityRules). Whole words, so "ball" doesn't match "balloon".
+const BALLOON_RE = /\bballoons?\b/i;
+const FALLING_RE = /\b(drops?|dropped|dropping|throws?|threw|thrown|throwing|falls?|fell|fallen|falling|toss(?:es|ed|ing)?|balls?|bounc(?:es?|ed|ing))\b/i;
+const LIQUID_RE = /\b(pours?|poured|pouring|spills?|spilled|spilling|splash(?:es|ed|ing)?|juice|water|milk|tea|soup|drinks?|drinking|cups?|glass(?:es)?|bottles?|jugs?|buckets?)\b/i;
+const PROPS_RE =
+  /\b(holds?|holding|held|carr(?:y|ies|ied|ying)|gives?|gave|giving|hands? (?:over|out)|picks? up|picked up|grabs?|grabbed|puts? down|balls?|toys?|props?|books?|cups?|baskets?|boxes|blocks?|bricks?|cones?|cards?|flags?|hats?|bags?|spoons?|brush(?:es)?|crayons?|pencils?)\b/i;
+
+/**
+ * Removes what a scene says is absent before keywords are matched. A negation runs to the end of its clause
+ * (. ; : ! ? or a line break), so a comma list like "no roads, water, equipment" goes with it while a later
+ * clause ("no zoom; Levon throws the ball") still counts.
+ */
+function stripNegated(text: string) {
+  return text
+    .replace(/\b(?:hold(?:s|ing)?|held|carr(?:y|ies|ied|ying)|with)\s+nothing\b/gi, " ")
+    .replace(/\b(?:no|not|without|never|nor|avoid|free of|nothing|nobody|no one)\b[^.;:!?\n]*/gi, " ")
+    .replace(/\b\w+n['’]t\b[^.;:!?\n]*/gi, " ");
+}
+
 /**
  * Appended to every video prompt. Most video models (Kling 4.0, Wan 3.0 on Higgsfield) have no negative
- * prompt, so these small, recurring defects are ruled out in the prompt itself.
+ * prompt, so these small, recurring defects are ruled out in the prompt itself. The rules about props,
+ * balloons, falling things and liquids are added only when `sceneText` (the scene's action, setting, dialogue
+ * and visual prompt) mentions them, so a scene of children on mats isn't told about balloons and juice.
+ * Negated phrases don't count: "no roads, water or people", "No falls or props" and "holding nothing" say what
+ * is absent.
  */
-export const VIDEO_QUALITY_RULES =
-  "Quality throughout the clip: smooth, natural-speed motion with no flicker, warping or morphing. Faces stay stable, " +
-  "eyes the same size, features never melting. Every hand has five fingers; no extra, missing or merged limbs. " +
-  "Bodies and objects never pass through each other, the floor or furniture; feet stay on the ground without sliding " +
-  "or floating. Props keep their shape and colour and stay in the hand holding them. " +
-  "Background and lighting stay the same; nothing in the background moves on its own. Story logic: an object " +
-  "appears only where the action says it comes from, and the number of each object changes only when the action " +
-  "shows it happen (one made means one more, not two). Objects stay separate unless the action joins them: nothing " +
-  "sticks to, merges with or gets carried off by something passing by. Real physics: released balloons rise, dropped " +
-  "things fall, liquids pour down. Characters look at whoever they talk to. One continuous shot with no cuts, flashes, fades or zooms the action doesn't ask for. No text, " +
-  "letters, subtitles, logos or watermarks. The last second is a calm, steady frame, nobody mid-blink or mid-word.";
+export function videoQualityRules(sceneText = "") {
+  const text = stripNegated(sceneText);
+  const physics: string[] = [];
+  if (BALLOON_RE.test(text)) physics.push("released balloons rise");
+  if (FALLING_RE.test(text)) physics.push("dropped or thrown things fall naturally");
+  if (LIQUID_RE.test(text)) physics.push("liquids pour down and stay in their containers");
+  const props = PROPS_RE.test(text) || physics.length > 0;
+  return (
+    "Quality throughout the clip: smooth, natural-speed motion with no flicker, warping or morphing. Faces stay stable, " +
+    "eyes the same size, features never melting. Every hand has five fingers; no extra, missing or merged limbs. " +
+    "Bodies and objects never pass through each other or any surface. Hands, feet and bodies resting on the ground or mat " +
+    "don't slide or float; a limb or the hips leave the surface only when the action says so. " +
+    (props
+      ? "Props keep their shape and colour and stay in the hand holding them. Story logic: an object appears only where " +
+        "the action says it comes from, and the number of each object changes only when the action shows it happen " +
+        "(one made means one more, not two). "
+      : "") +
+    "Background and lighting stay the same; nothing in the background moves on its own. Objects stay separate unless " +
+    "the action joins them: nothing sticks to, merges with or gets carried off by something passing by. " +
+    (physics.length ? `Real physics: ${physics.join("; ")}. ` : "") +
+    "Characters look at whoever they talk to. One continuous shot with no cuts, flashes, fades or zooms the action doesn't ask for. No text, " +
+    "letters, subtitles, logos or watermarks. The last second is a calm, steady frame, nobody mid-blink or mid-word."
+  );
+}
+
+/** The quality rules every clip gets, whatever the scene mentions. */
+export const VIDEO_QUALITY_RULES = videoQualityRules();
 
 /** Appended to the prompt of a video model that generates its own sound. */
 export const AUDIO_QUALITY_RULES =
@@ -280,9 +324,9 @@ export type Timeline = {
 
 // A time stamp is seconds ("3", "3.5") or minutes:seconds ("0:03").
 const STAMP = String.raw`(\d{1,3}(?::\d{2})?(?:\.\d+)?)`;
-// "0-3s: text", "3 – 7 s: text", "[10-13s] text", "(0:00-0:03): text", "Shot 2 (3-7s): text".
+// "0-3s: text", "3 – 7 s: text", "[10-13s] text", "(0:00-0:03): text", "Shot 2 (3-7s): text", "Beat 2 [3-7s]: text".
 const SEGMENT_RE = new RegExp(
-  String.raw`^\s*(?:shot\s*\d+\s*[:：]?\s*)?([[(])?\s*${STAMP}\s*s?\s*(?:-|–|—|to)\s*${STAMP}\s*s?\s*([\])])?\s*([:：])?\s*(.*)$`,
+  String.raw`^\s*(?:(?:shot|beat)\s*\d+\s*[:：]?\s*)?([[(])?\s*${STAMP}\s*s?\s*(?:-|–|—|to)\s*${STAMP}\s*s?\s*([\])])?\s*([:：])?\s*(.*)$`,
   "i",
 );
 
@@ -386,7 +430,7 @@ function sentences(text: string) {
     .filter(Boolean);
 }
 
-type Turn = { speaker: string; line: string; at: { start: number; end: number } | null };
+type Turn = { speakers: string[]; line: string; at: { start: number; end: number } | null };
 
 // A Dialogue row: "Name: line" or "Name: 0-3s: line" (also "0–3s", "0-3 s", "[0-3s]").
 const DIALOGUE_ROW_RE = /^\s*([^:]+):\s*(?:\[?(\d+(?:\.\d+)?)\s*[-–]\s*(\d+(?:\.\d+)?)\s*s\]?\s*:?\s*)?(.+)$/;
@@ -421,7 +465,8 @@ export function stripNarration(text: string) {
  * The characters' spoken lines for video models that generate their own sound, in the syntax
  * Alibaba's Wan 3.0 prompt guide documents (`Name says: "line"`, "Lip sync"). There is no voice-over:
  * lines without a speaker are left out. Each line names who stays silent, because models tend to move
- * the listener's mouth too. A line written as "Name: 0-3s: line" is stamped [0-3s] outside the quotes;
+ * the listener's mouth too. "Levon & Yana: line" (or "Both: line") is said together, in unison (see
+ * lineSpeakers). A line written as "Name: 0-3s: line" is stamped [0-3s] outside the quotes;
  * otherwise, with a timed action (see parseTimeline), a line the action quotes is stamped with its
  * beat, so speech and movement line up and the lines aren't spread evenly over the clip. `onScreen` adds characters who are in the shot but have no lines.
  */
@@ -435,7 +480,9 @@ export function describeDialogue(
     .filter((d) => d !== null)
     .filter((d) => d.line && d.speaker && d.speaker.toLowerCase() !== NARRATOR.toLowerCase());
   if (!spoken.length) return "";
-  const present = [...new Set([...onScreen.map((n) => n.trim()), ...spoken.map((d) => d.speaker)].filter(Boolean))];
+  const cast = [...new Set(onScreen.map((n) => n.trim()).filter(Boolean))];
+  const speakers = spoken.map((d) => lineSpeakers(d.speaker, cast));
+  const present = [...new Set([...cast, ...speakers.flat()])];
 
   const segments = options.timeline ?? [];
   const placed = placeLines(
@@ -445,23 +492,28 @@ export function describeDialogue(
   // A line's own timing wins over the beat that quotes it. Stable by start time; untimed lines keep
   // their list order at the end.
   const turns: Turn[] = spoken
-    .map(({ speaker, line, timing }, index) => {
+    .map(({ line, timing }, index) => {
       const beat = placed[index];
-      return { turn: { speaker, line, at: timing ?? (beat ? { start: beat.start, end: beat.end } : null) }, index };
+      return { turn: { speakers: speakers[index], line, at: timing ?? (beat ? { start: beat.start, end: beat.end } : null) }, index };
     })
     .sort((a, b) => (a.turn.at?.start ?? Infinity) - (b.turn.at?.start ?? Infinity) || a.index - b.index)
     .map((t) => t.turn);
   const timed = turns.some((t) => t.at);
+  const chorus = turns.some((t) => t.speakers.length > 1);
 
-  const rendered = turns.map(({ speaker, line, at }) => {
+  const rendered = turns.map(({ speakers, line, at }) => {
     const stamp = at === null ? "" : `[${at.start}-${at.end}s] `;
-    const listeners = present.filter((n) => n !== speaker);
+    const listeners = present.filter((n) => !speakers.includes(n));
     const silent = listeners.length
       ? listeners.length > 1
         ? ` ${joinNames(listeners)} keep their mouths closed.`
         : ` ${listeners[0]}'s mouth stays closed.`
       : "";
-    return `${stamp}${speaker} says: "${line}" Lip sync.${silent}`;
+    if (speakers.length > 1) {
+      const mouths = speakers.length === 2 ? "both their mouths" : "all their mouths";
+      return `${stamp}${joinNames(speakers)} say together, in unison: "${line}" Lip sync, ${mouths} move at the same time.${silent}`;
+    }
+    return `${stamp}${speakers[0]} says: "${line}" Lip sync.${silent}`;
   });
 
   const total = Math.round(turns.reduce((sum, t) => sum + speechSeconds(t.line), 0));
@@ -471,13 +523,17 @@ export function describeDialogue(
       ? " at the second given, in step with the action above"
       : ", in this order, at the moment the action above says they speak") +
     `. Natural, lively children's-TV pace, about ${Math.max(total, 1)} seconds of speech in total: each line takes only as long as its words need and is never slowed or stretched; between lines nobody speaks. ` +
-    "Only one character speaks at a time and only the speaker's lips move:";
+    (chorus
+      ? "Only the characters named for a line speak it and only their lips move; a line marked together is said by them at once, in unison, otherwise one character speaks at a time:"
+      : "Only one character speaks at a time and only the speaker's lips move:");
   return `${header}\n${rendered.join("\n")}\nNo other dialogue. No narrator or voice-over.${options.music ? "" : " No background music."}`;
 }
 
 export type VideoPromptInput = {
   visualPrompt: string;
   action: string;
+  /** Where the scene happens; with the action, dialogue and visual prompt it decides which physics rules the clip needs. */
+  setting?: string;
   dialogue: StoryScene["dialogue"];
   characters: PromptCharacter[];
   visualStyle?: string | null;
@@ -499,7 +555,7 @@ function identity(character: PromptCharacter) {
 
 /**
  * The prompt for a video model, following Alibaba's Wan 3.0 prompt guide: an overall line, the
- * scene's action as timed shots, then the dialogue. Clips never get a voice-over: the scene's
+ * scene's action as timed beats, then the dialogue. Clips never get a voice-over: the scene's
  * narration isn't sent and narrator cues are removed from the action. The scene's visual prompt
  * describes the keyframe (a still pose), so with a start image it is left out and the image is declared the lock for
  * characters, outfits and setting; the character bible is left out too, because its canonical outfit
@@ -507,7 +563,7 @@ function identity(character: PromptCharacter) {
  * image. Text-to-video has no image to lock to, so it keeps the visual prompt and the bible.
  */
 export function buildVideoPrompt(input: VideoPromptInput) {
-  const style = input.visualStyle?.trim();
+  const style = input.visualStyle && unpunctuated(input.visualStyle);
   const names = input.characters.map((c) => c.name.trim()).filter(Boolean);
   const action = stripNarration(input.action);
   const timeline = parseTimeline(action);
@@ -539,7 +595,8 @@ export function buildVideoPrompt(input: VideoPromptInput) {
     parts.push(
       [
         ...timeline.preamble,
-        ...timeline.segments.map((s, i) => `Shot ${i + 1} [${s.start}-${s.end}s]: ${s.text}`),
+        // "Beat", not "Shot": Kling reads "Shot" as a cut even when the prompt asks for one continuous take.
+        ...timeline.segments.map((s, i) => `Beat ${i + 1} [${s.start}-${s.end}s]: ${s.text}`),
         ...timeline.notes,
       ].join("\n"),
     );
@@ -567,7 +624,9 @@ export function buildVideoPrompt(input: VideoPromptInput) {
       parts.push("No dialogue, no narrator or voice-over.", `Audio: ${music}, soft and quiet under ambient sounds. No voices, no singing.`);
     }
   }
-  parts.push(VIDEO_QUALITY_RULES);
+  // One field per line, so a negation at the end of one field doesn't swallow the start of the next.
+  const sceneText = [action, input.setting ?? "", input.visualPrompt, ...input.dialogue.map((d) => d.line)].join("\n");
+  parts.push(videoQualityRules(sceneText));
   if (input.voiced) parts.push(AUDIO_QUALITY_RULES);
   return parts.filter(Boolean).join("\n\n");
 }
@@ -751,7 +810,7 @@ const text = (max: number) => z.string().trim().max(max).default("");
 export const sceneInputSchema = z
   .object({
     title: z.string().trim().min(1, "Give the scene a title").max(160),
-    setting: text(2000),
+    setting: text(4000),
     action: text(4000),
     narration: text(8000),
     dialogue: text(8000).transform(parseDialogue),
@@ -761,8 +820,8 @@ export const sceneInputSchema = z
       .min(1, "At least 1 second")
       .max(600, "At most 10 minutes"),
     visualPrompt: text(6000),
-    negativePrompt: text(2000),
-    notes: text(2000),
+    negativePrompt: text(4000),
+    notes: text(4000),
     overlays: z.array(sceneOverlaySchema, "Invalid overlays").max(MAX_OVERLAYS * 2).default([]),
     characterIds: z.array(z.uuid()).max(30).default([]),
   })

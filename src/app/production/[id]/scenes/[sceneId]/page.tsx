@@ -24,6 +24,7 @@ import { readSceneFrames } from "@/lib/kling";
 import { MODULES } from "@/lib/navigation";
 import { readOverlays } from "@/lib/overlays";
 import { buildGenerationPrompt, buildVideoPrompt, findPromptConcerns, POLLABLE_JOB_STATUSES } from "@/lib/production";
+import { formatDialogue } from "@/lib/stories";
 import { getClaudeConfig } from "@/server/ai/claude";
 import { loadClipMusic } from "@/server/production/service";
 import { getHedraConfig } from "@/server/providers/hedra";
@@ -103,6 +104,7 @@ async function SceneData({ params }: Pick<Props, "params">) {
     buildVideoPrompt({
       visualPrompt: scene.visualPrompt,
       action: scene.action,
+      setting: scene.setting,
       dialogue: scene.dialogue,
       characters: linked,
       visualStyle: plan.visualStyle,
@@ -112,8 +114,21 @@ async function SceneData({ params }: Pick<Props, "params">) {
       music,
     });
   const videoPrompts = { fromImage: videoPromptFor(true), fromText: videoPromptFor(false) };
-  const concerns = [
+  // The sent prompts also carry character descriptions, the plan style, action and dialogue, so a concern
+  // may not be in the visual prompt at all. Each is labelled with the field to edit.
+  const sources: [string, string][] = [
+    ["Visual prompt", scene.visualPrompt],
+    ...linked.map((c): [string, string] => [`Character “${c.name}” (Characters page)`, `${c.name} ${c.visualDescription}`]),
+    ["Plan visual style", plan.visualStyle ?? ""],
+    ["Action", scene.action],
+    ["Dialogue", formatDialogue(scene.dialogue)],
+  ];
+  const sourcedConcerns = sources.flatMap(([where, text]) => findPromptConcerns(text).map((c) => `${where}: ${c}`));
+  const builtConcerns = [
     ...new Set([...findPromptConcerns(prompt), ...findPromptConcerns(videoPrompts.fromImage), ...findPromptConcerns(videoPrompts.fromText)]),
+  ];
+  const concerns = [
+    ...(sourcedConcerns.length || !builtConcerns.length ? sourcedConcerns : builtConcerns.map((c) => `Generated prompt: ${c}`)),
     ...qcBlockers,
   ];
   const revisions = new Map(detail.assets.map((a) => [a.id, a.revision]));
