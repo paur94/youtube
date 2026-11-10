@@ -28,7 +28,12 @@ import {
 } from "@/components/ui/dialog";
 import type { Character } from "@/db/schema";
 import type { AssetStatus, CharacterStatus } from "@/lib/production";
-import { deleteCharacter, setCharacterStatus, setPrimaryReference } from "@/server/actions/characters";
+import {
+  deleteCharacter,
+  deleteCharacterReference,
+  setCharacterStatus,
+  setPrimaryReference,
+} from "@/server/actions/characters";
 import { reviewAsset } from "@/server/actions/production";
 
 import { CharacterForm } from "./character-form";
@@ -136,6 +141,7 @@ export function ReferenceCard({
   isPrimary: boolean;
 }) {
   const [pending, run] = useAction();
+  const [confirmOpen, setConfirmOpen] = useState(false);
   return (
     <article className="grid content-start gap-2 rounded-lg border bg-background/40 p-2.5">
       <AssetPreview kind="image" filePath={reference.filePath} className="aspect-square" />
@@ -148,7 +154,38 @@ export function ReferenceCard({
             Primary
           </Badge>
         )}
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          className="ml-auto text-muted-foreground hover:text-destructive"
+          aria-label="Remove reference image"
+          title="Remove reference image"
+          disabled={pending}
+          onClick={() => setConfirmOpen(true)}
+        >
+          <Trash2Icon />
+        </Button>
       </div>
+      <AlertDialog open={confirmOpen} onOpenChange={setConfirmOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Remove this reference image?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {isPrimary ? "It is the primary reference; pick another one afterwards. " : ""}
+              The record is removed; the file stays in the media folder.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              variant="destructive"
+              onClick={() => run(() => deleteCharacterReference(characterId, reference.id))}
+            >
+              Remove
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
       <p className="truncate text-xs text-muted-foreground" title={reference.originalName ?? ""}>
         {reference.createdAt}
         {reference.originalName && ` · ${reference.originalName}`}

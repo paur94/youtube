@@ -227,23 +227,6 @@ describe("describeDialogue", () => {
     expect(text).toContain("spoken word for word at the second given");
   });
 
-  it("has lines given to several characters said together, in unison", () => {
-    const text = describeDialogue(
-      [
-        { character: "Levon", line: "Ready?" },
-        { character: "levon & Yana", line: "2-4s: Let's go!" },
-        { character: "Both", line: "Hooray!" },
-      ],
-      ["Levon", "Yana", "Zip"],
-    );
-    const lines = text.split("\n");
-    expect(lines[1]).toBe(`[2-4s] Levon and Yana say together, in unison: "Let's go!" Lip sync, both their mouths move at the same time. Zip's mouth stays closed.`);
-    expect(lines[2]).toBe(`Levon says: "Ready?" Lip sync. Yana and Zip keep their mouths closed.`);
-    expect(lines[3]).toContain(`say together, in unison: "Hooray!" Lip sync, all their mouths move at the same time.`);
-    expect(text).toContain("a line marked together is said by them at once");
-    expect(text).not.toContain("Only one character speaks at a time");
-  });
-
   it("is empty when the scene has no dialogue", () => {
     expect(describeDialogue([])).toBe("");
   });

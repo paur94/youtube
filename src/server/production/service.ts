@@ -378,9 +378,13 @@ function notConfiguredMessage(provider: string | undefined) {
 }
 
 /** Makes a stored image readable by the provider: uploads the local file, or falls back to its source URL. */
-async function publicImageUrl(provider: ApiProvider, asset: typeof assets.$inferSelect) {
+async function publicImageUrl(provider: ApiProvider, asset: typeof assets.$inferSelect, role = "start image") {
   const file = asset.filePath ? resolveMediaPath(asset.filePath) : null;
-  if (file && asset.contentType) return provider.uploadFile(new Uint8Array(await readFile(file)), asset.contentType);
+  if (file && asset.contentType) {
+    const bytes = await readFile(file).catch(() => null);
+    if (!bytes) throw new MediaError(`The ${role} file is missing from storage. Pick another image.`);
+    return provider.uploadFile(new Uint8Array(bytes), asset.contentType);
+  }
   return asset.sourceUrl;
 }
 
@@ -555,10 +559,15 @@ export async function submitApiGeneration(options: SubmitOptions): Promise<Servi
       : [];
     try {
       const uploaded = await Promise.all(
-        refs.map(async (r) => ({ names: r.names, url: await publicImageUrl(client, r.asset) })),
+        refs.map(async (r) => ({
+          names: r.names,
+          url: await publicImageUrl(client, r.asset, `reference image for ${r.names.join(" and ")}`),
+        })),
       );
       const usable = uploaded.filter((r): r is { names: string[]; url: string } => Boolean(r.url));
-      const sceneUrls = (await Promise.all(sceneRefs.map((a) => publicImageUrl(client, a)))).filter((u): u is string => Boolean(u));
+      const sceneUrls = (await Promise.all(sceneRefs.map((a) => publicImageUrl(client, a, "scene reference image")))).filter(
+        (u): u is string => Boolean(u),
+      );
       if (usable.length || sceneUrls.length) {
         referenceUrls = [...usable.map((r) => r.url), ...sceneUrls];
         prompt = `${prompt}

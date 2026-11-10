@@ -81,7 +81,7 @@ export function SceneForm({
       <Field id={`${id}-narration`} label="Narration" error={errors?.narration}>
         <Textarea id={`${id}-narration`} name="narration" rows={3} maxLength={8000} defaultValue={scene.narration} />
       </Field>
-      <Field id={`${id}-dialogue`} label="Dialogue" hint="One line each: Name: line. Said together: Levon & Yana: line (or Both: line)" error={errors?.dialogue}>
+      <Field id={`${id}-dialogue`} label="Dialogue" hint="One line each: Name: line" error={errors?.dialogue}>
         <Textarea
           id={`${id}-dialogue`}
           name="dialogue"

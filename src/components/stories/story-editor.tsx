@@ -324,7 +324,7 @@ function SceneCard({
           />
         </Field>
         {/* Parsed on blur so typing isn't reformatted mid-line. */}
-        <Field id={`${id}-dialogue`} label="Dialogue" hint="One line each, “Name: line”. Said together: “Levon & Yana: line” or “Both: line”">
+        <Field id={`${id}-dialogue`} label="Dialogue" hint="One line each, “Name: line”">
           <Textarea
             id={`${id}-dialogue`}
             rows={Math.max(2, scene.dialogue.length)}

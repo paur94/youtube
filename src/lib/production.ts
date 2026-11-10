@@ -2,7 +2,7 @@ import { z } from "zod";
 
 import { MAX_OVERLAYS, sceneOverlaySchema, validateOverlays } from "./overlays";
 import { extractCorrections } from "./story-qc";
-import { lineSpeakers, parseDialogue, type StoryContent, type StoryScene } from "./stories";
+import { parseDialogue, type StoryContent, type StoryScene } from "./stories";
 
 // Shared by the DB schema, server actions, the generation queue and client components.
 export const PLAN_STATUSES = ["planning", "in_production", "ready_for_assembly"] as const;
@@ -472,7 +472,7 @@ function sentences(text: string) {
     .filter(Boolean);
 }
 
-type Turn = { speakers: string[]; line: string; at: { start: number; end: number } | null };
+type Turn = { speaker: string; line: string; at: { start: number; end: number } | null };
 
 // A Dialogue row: "Name: line" or "Name: 0-3s: line" (also "0–3s", "0-3 s", "[0-3s]").
 const DIALOGUE_ROW_RE = /^\s*([^:]+):\s*(?:\[?(\d+(?:\.\d+)?)\s*[-–]\s*(\d+(?:\.\d+)?)\s*s\]?\s*:?\s*)?(.+)$/;
@@ -507,8 +507,7 @@ export function stripNarration(text: string) {
  * The characters' spoken lines for video models that generate their own sound, in the syntax
  * Alibaba's Wan 3.0 prompt guide documents (`Name says: "line"`, "Lip sync"). There is no voice-over:
  * lines without a speaker are left out. Each line names who stays silent, because models tend to move
- * the listener's mouth too. "Levon & Yana: line" (or "Both: line") is said together, in unison (see
- * lineSpeakers). A line written as "Name: 0-3s: line" is stamped [0-3s] outside the quotes;
+ * the listener's mouth too. A line written as "Name: 0-3s: line" is stamped [0-3s] outside the quotes;
  * otherwise, with a timed action (see parseTimeline), a line the action quotes is stamped with its
  * beat, so speech and movement line up and the lines aren't spread evenly over the clip. `onScreen` adds characters who are in the shot but have no lines.
  */
@@ -522,9 +521,7 @@ export function describeDialogue(
     .filter((d) => d !== null)
     .filter((d) => d.line && d.speaker && d.speaker.toLowerCase() !== NARRATOR.toLowerCase());
   if (!spoken.length) return "";
-  const cast = [...new Set(onScreen.map((n) => n.trim()).filter(Boolean))];
-  const speakers = spoken.map((d) => lineSpeakers(d.speaker, cast));
-  const present = [...new Set([...cast, ...speakers.flat()])];
+  const present = [...new Set([...onScreen.map((n) => n.trim()), ...spoken.map((d) => d.speaker)].filter(Boolean))];
 
   const segments = options.timeline ?? [];
   const placed = placeLines(
@@ -534,28 +531,23 @@ export function describeDialogue(
   // A line's own timing wins over the beat that quotes it. Stable by start time; untimed lines keep
   // their list order at the end.
   const turns: Turn[] = spoken
-    .map(({ line, timing }, index) => {
+    .map(({ speaker, line, timing }, index) => {
       const beat = placed[index];
-      return { turn: { speakers: speakers[index], line, at: timing ?? (beat ? { start: beat.start, end: beat.end } : null) }, index };
+      return { turn: { speaker, line, at: timing ?? (beat ? { start: beat.start, end: beat.end } : null) }, index };
     })
     .sort((a, b) => (a.turn.at?.start ?? Infinity) - (b.turn.at?.start ?? Infinity) || a.index - b.index)
     .map((t) => t.turn);
   const timed = turns.some((t) => t.at);
-  const chorus = turns.some((t) => t.speakers.length > 1);
 
-  const rendered = turns.map(({ speakers, line, at }) => {
+  const rendered = turns.map(({ speaker, line, at }) => {
     const stamp = at === null ? "" : `[${at.start}-${at.end}s] `;
-    const listeners = present.filter((n) => !speakers.includes(n));
+    const listeners = present.filter((n) => n !== speaker);
     const silent = listeners.length
       ? listeners.length > 1
         ? ` ${joinNames(listeners)} keep their mouths closed.`
         : ` ${listeners[0]}'s mouth stays closed.`
       : "";
-    if (speakers.length > 1) {
-      const mouths = speakers.length === 2 ? "both their mouths" : "all their mouths";
-      return `${stamp}${joinNames(speakers)} say together, in unison: "${line}" Lip sync, ${mouths} move at the same time.${silent}`;
-    }
-    return `${stamp}${speakers[0]} says: "${line}" Lip sync.${silent}`;
+    return `${stamp}${speaker} says: "${line}" Lip sync.${silent}`;
   });
 
   const total = Math.round(turns.reduce((sum, t) => sum + speechSeconds(t.line), 0));
@@ -565,9 +557,7 @@ export function describeDialogue(
       ? " at the second given, in step with the action above"
       : ", in this order, at the moment the action above says they speak") +
     `. Natural, lively children's-TV pace, about ${Math.max(total, 1)} seconds of speech in total: each line takes only as long as its words need and is never slowed or stretched; between lines nobody speaks. ` +
-    (chorus
-      ? "Only the characters named for a line speak it and only their lips move; a line marked together is said by them at once, in unison, otherwise one character speaks at a time:"
-      : "Only one character speaks at a time and only the speaker's lips move:");
+    "Only one character speaks at a time and only the speaker's lips move:";
   return `${header}\n${rendered.join("\n")}\nNo other dialogue. No narrator or voice-over.${options.music ? "" : " No background music."}`;
 }
 

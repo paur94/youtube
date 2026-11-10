@@ -22,7 +22,8 @@ export const REVISION_SOURCE_LABELS: Record<RevisionSource, string> = {
   restored: "Restored",
 };
 
-export const DURATION_PRESETS = [30, 40, 45, 60, 120, 180, 300, 480, 600, 900] as const;
+export const MIN_DURATION_SECONDS = 15;
+export const MAX_DURATION_SECONDS = 900;
 
 export function formatDuration(seconds: number) {
   const s = Math.max(0, Math.round(seconds));
@@ -80,9 +81,10 @@ export const storyInputSchema = z.object({
     .max(500),
   characters: z.string().trim().max(2000).default(""),
   targetDurationSeconds: z.coerce
-    .number("Choose a duration")
-    .int()
-    .refine((n) => (DURATION_PRESETS as readonly number[]).includes(n), "Choose a duration"),
+    .number("Enter a duration in seconds")
+    .int("Use whole seconds")
+    .min(MIN_DURATION_SECONDS, `At least ${MIN_DURATION_SECONDS} seconds`)
+    .max(MAX_DURATION_SECONDS, `At most ${MAX_DURATION_SECONDS} seconds`),
   tone: z.string().trim().min(2, "Describe the tone").max(80),
   visualStyle: z.string().trim().min(2, "Describe the visual style").max(160),
   language: z.string().trim().min(2, "Enter a language").max(40),
@@ -225,25 +227,6 @@ export function parseDialogue(text: string): StoryScene["dialogue"] {
       if (at <= 0) return { character: "Narrator", line: row };
       return { character: row.slice(0, at).trim(), line: row.slice(at + 1).trim() };
     });
-}
-
-// Speaker words that mean everyone in the shot says the line together.
-const CHORUS_WORDS = new Set(["both", "all", "everyone", "together"]);
-
-/**
- * The characters who say a dialogue line. "Levon & Yana", "Levon and Yana" or "Levon, Yana" is a line
- * they say together; "Both", "All", "Everyone" or "Together" means all of `cast`. Names that match the
- * cast take its spelling.
- */
-export function lineSpeakers(speaker: string, cast: string[] = []) {
-  const name = speaker.trim();
-  if (CHORUS_WORDS.has(name.toLowerCase()) && cast.length > 1) return [...cast];
-  const parts = name
-    .split(/\s*(?:&|\+|,|\band\b)\s*/i)
-    .map((s) => s.trim())
-    .filter(Boolean);
-  if (parts.length < 2) return name ? [name] : [];
-  return [...new Set(parts.map((p) => cast.find((c) => c.toLowerCase() === p.toLowerCase()) ?? p))];
 }
 
 export function parseList(text: string) {

@@ -113,3 +113,22 @@ export async function setPrimaryReference(characterId: string, assetId: string):
   revalidateCharacters(id.data);
   return { ok: true, message: "Primary reference updated" };
 }
+
+/** Removes a reference image's record (and the primary pick, if it was). The file stays in the media folder. */
+export async function deleteCharacterReference(characterId: string, assetId: string): Promise<ActionResult> {
+  const id = idSchema.safeParse(characterId);
+  const ref = idSchema.safeParse(assetId);
+  if (!id.success || !ref.success) return { ok: false, message: "Invalid request" };
+  try {
+    const deleted = await db
+      .delete(assets)
+      .where(and(eq(assets.id, ref.data), eq(assets.characterId, id.data)))
+      .returning({ id: assets.id });
+    if (!deleted.length) return { ok: false, message: "Reference not found" };
+  } catch (error) {
+    console.error("deleteCharacterReference failed", error);
+    return { ok: false, message: DB_ERROR };
+  }
+  revalidateCharacters(id.data);
+  return { ok: true, message: "Reference image removed. The file stays in the media folder." };
+}

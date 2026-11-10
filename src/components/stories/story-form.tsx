@@ -21,9 +21,9 @@ import { VisualStylePreset } from "@/components/visual-style-preset";
 import type { Story } from "@/db/schema";
 import { AGE_GROUP_LABELS, AGE_GROUPS } from "@/lib/ideas";
 import {
-  DURATION_PRESETS,
-  formatDuration,
   LANGUAGE_SUGGESTIONS,
+  MAX_DURATION_SECONDS,
+  MIN_DURATION_SECONDS,
   TONE_SUGGESTIONS,
   VISUAL_STYLE_SUGGESTIONS,
   type StoryFormState,
@@ -167,17 +167,26 @@ export function StoryForm({
             defaultValue={defaults.ageGroup ?? "3-5"}
             options={AGE_GROUPS.map((v) => [v, AGE_GROUP_LABELS[v]])}
           />
-          <SelectField
+          <Field
             id={`${id}-duration`}
-            name="targetDurationSeconds"
             label="Story duration"
-            defaultValue={String(defaults.targetDurationSeconds ?? 180)}
-            options={DURATION_PRESETS.map((s) => [String(s), formatDuration(s)])}
-          />
+            hint="Seconds"
+            error={errors?.targetDurationSeconds}
+          >
+            <Input
+              id={`${id}-duration`}
+              name="targetDurationSeconds"
+              type="number"
+              inputMode="numeric"
+              required
+              min={MIN_DURATION_SECONDS}
+              max={MAX_DURATION_SECONDS}
+              step={1}
+              defaultValue={defaults.targetDurationSeconds ?? 180}
+              aria-invalid={!!errors?.targetDurationSeconds}
+            />
+          </Field>
         </div>
-        {errors?.targetDurationSeconds?.[0] && (
-          <p className="-mt-2 text-xs text-destructive">{errors.targetDurationSeconds[0]}</p>
-        )}
 
         <Field id={`${id}-topic`} label="Topic" error={errors?.topic}>
           <Textarea
