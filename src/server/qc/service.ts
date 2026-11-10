@@ -7,6 +7,7 @@ import { and, asc, desc, eq, inArray, ne } from "drizzle-orm";
 
 import { db } from "@/db";
 import { assets, characters, productionPlans, productionScenes, sceneCharacters, shortGenerations, storyCharacters } from "@/db/schema";
+import { resolveLook } from "@/lib/production";
 import {
   buildCorrectedPrompt,
   checkPlanRules,
@@ -71,6 +72,8 @@ export async function loadPlanQc(planId: string) {
           id: characters.id,
           name: characters.name,
           visualDescription: characters.visualDescription,
+          looks: characters.looks,
+          lookId: sceneCharacters.lookId,
           primaryReferenceId: characters.primaryReferenceId,
         })
         .from(sceneCharacters)
@@ -96,7 +99,7 @@ export async function loadPlanQc(planId: string) {
       i + 1,
       links
         .filter((l) => l.sceneId === scene.id)
-        .map((l) => ({ name: l.name, visualDescription: l.visualDescription, hasReference: withReference.has(l.id) })),
+        .map((l) => ({ name: l.name, visualDescription: resolveLook(l, l.lookId).visualDescription, hasReference: withReference.has(l.id) })),
     ),
   );
   const rules = checkPlanRules(qcScenes);

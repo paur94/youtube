@@ -81,13 +81,23 @@ export function CharacterStatusActions({ id, status }: { id: string; status: Cha
   );
 }
 
-export function DeleteCharacterButton({ id, name, appearances }: { id: string; name: string; appearances: number }) {
+export function DeleteCharacterButton({
+  id,
+  name,
+  appearances,
+  className,
+}: {
+  id: string;
+  name: string;
+  appearances: number;
+  className?: string;
+}) {
   const [open, setOpen] = useState(false);
   const [pending, run] = useAction();
   const router = useRouter();
   return (
     <>
-      <Button variant="ghost" size="icon" aria-label="Delete character" onClick={() => setOpen(true)} disabled={pending}>
+      <Button variant="ghost" size="icon" className={className} aria-label={`Delete ${name}`} onClick={() => setOpen(true)} disabled={pending}>
         <Trash2Icon />
       </Button>
       <AlertDialog open={open} onOpenChange={setOpen}>

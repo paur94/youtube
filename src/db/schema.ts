@@ -28,6 +28,7 @@ import {
   ASSET_SOURCES,
   ASSET_STATUSES,
   CHARACTER_STATUSES,
+  type CharacterLook,
   JOB_MODES,
   JOB_STATUSES,
   PLAN_STATUSES,
@@ -176,8 +177,10 @@ export const characters = pgTable(
     name: text().notNull(),
     role: text().notNull().default(""),
     description: text().notNull().default(""),
-    // Canonical look, appended to every prompt the character appears in.
+    // Default look, appended to every prompt the character appears in unless the scene picks another one.
     visualDescription: text().notNull(),
+    // Alternative looks (outfits, seasons…); a scene picks one through scene_characters.look_id.
+    looks: jsonb().$type<CharacterLook[]>().notNull().default([]),
     notes: text().notNull().default(""),
     status: characterStatus().notNull().default("draft"),
     primaryReferenceId: uuid().references((): AnyPgColumn => assets.id, { onDelete: "set null" }),
@@ -275,6 +278,8 @@ export const sceneCharacters = pgTable(
     characterId: uuid()
       .notNull()
       .references(() => characters.id, { onDelete: "cascade" }),
+    // One of the character's looks; null (or a look that was removed) uses the default description.
+    lookId: text(),
   },
   (t) => [primaryKey({ columns: [t.sceneId, t.characterId] }), index().on(t.characterId)],
 );

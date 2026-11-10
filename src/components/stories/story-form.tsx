@@ -17,6 +17,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import { VisualStylePreset } from "@/components/visual-style-preset";
 import type { Story } from "@/db/schema";
 import { AGE_GROUP_LABELS, AGE_GROUPS } from "@/lib/ideas";
 import {
@@ -241,19 +242,11 @@ export function StoryForm({
           </Field>
         </div>
 
-        <Field id={`${id}-style`} label="Visual style" error={errors?.visualStyle}>
-          <Input
-            id={`${id}-style`}
-            name="visualStyle"
-            required
-            minLength={2}
-            maxLength={160}
-            list={`${id}-style-list`}
-            defaultValue={defaults.visualStyle ?? VISUAL_STYLE_SUGGESTIONS[0]}
-            aria-invalid={!!errors?.visualStyle}
-          />
-          <Suggestions id={`${id}-style-list`} values={VISUAL_STYLE_SUGGESTIONS} />
-        </Field>
+        <VisualStyleField
+          id={`${id}-style`}
+          defaultValue={defaults.visualStyle ?? VISUAL_STYLE_SUGGESTIONS[0]}
+          error={errors?.visualStyle}
+        />
 
         <Field id={`${id}-notes`} label="Additional notes" hint="Optional" error={errors?.notes}>
           <Textarea
@@ -292,6 +285,25 @@ function Suggestions({ id, values }: { id: string; values: string[] }) {
         <option key={v} value={v} />
       ))}
     </datalist>
+  );
+}
+
+function VisualStyleField({ id, defaultValue, error }: { id: string; defaultValue: string; error?: string[] }) {
+  const [value, setValue] = useState(defaultValue);
+  return (
+    <Field id={id} label="Visual style" error={error}>
+      <VisualStylePreset value={value} onSelect={setValue} />
+      <Input
+        id={id}
+        name="visualStyle"
+        required
+        minLength={2}
+        maxLength={160}
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+        aria-invalid={!!error}
+      />
+    </Field>
   );
 }
 

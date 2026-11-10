@@ -93,7 +93,7 @@ async function ShortsData() {
                 <CardHeader>
                   <CardTitle>{group.title}</CardTitle>
                   <CardDescription>
-                    {group.rows.length} Short{group.rows.length === 1 ? "" : "s"} · ordered by suggested publishing order
+                    {group.rows.length} Short{group.rows.length === 1 ? "" : "s"} · newest first
                   </CardDescription>
                   {group.planId && (
                     <CardAction>

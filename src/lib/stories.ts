@@ -40,13 +40,24 @@ export const TONE_SUGGESTIONS = [
   "Upbeat and energetic",
 ];
 
-export const VISUAL_STYLE_SUGGESTIONS = [
-  "Soft 3D animation, pastel colours",
-  "Hand-drawn watercolour storybook",
-  "Bright flat 2D cartoon",
-  "Paper cut-out collage",
-  "Claymation look",
+// The style is prompt text: image and video models read the whole string, so each names the look,
+// materials and camera rather than just a label.
+export const VISUAL_STYLE_PRESETS = [
+  { label: "Soft 3D", style: "Soft 3D animation, pastel colours" },
+  {
+    label: "Isometric",
+    style: "Isometric 3D animation: miniature diorama world seen from a fixed high isometric angle, clean shapes, bright pastel colours",
+  },
+  {
+    label: "Claymation",
+    style: "Claymation stop-motion: handmade plasticine characters and sets, visible fingerprint texture, soft studio lighting",
+  },
+  { label: "Watercolour storybook", style: "Hand-drawn watercolour storybook" },
+  { label: "Flat 2D cartoon", style: "Bright flat 2D cartoon" },
+  { label: "Paper cut-out", style: "Paper cut-out collage" },
 ];
+
+export const VISUAL_STYLE_SUGGESTIONS = VISUAL_STYLE_PRESETS.map((p) => p.style);
 
 export const LANGUAGE_SUGGESTIONS = ["English", "Spanish", "French", "German", "Portuguese", "Armenian", "Russian"];
 

@@ -33,6 +33,7 @@ import {
   moveInOrder,
   normalizeName,
   parseSceneForm,
+  resolveLook,
   type SceneFormState,
   scenesFromStory,
 } from "@/lib/production";
@@ -241,7 +242,8 @@ export async function updateScene(sceneId: string, _prev: SceneFormState, formDa
   if (!id.success) return { ok: false, message: "Invalid scene id" };
   if (!parsed.success) return { ok: false, errors: z.flattenError(parsed.error).fieldErrors };
 
-  const { characterIds, ...values } = parsed.data;
+  const { characterIds, characterLooks, ...values } = parsed.data;
+  const lookIds = new Map(characterLooks.map((value) => [value.slice(0, 36), value.slice(37)]));
   let planId: string | null;
   try {
     planId = await db.transaction(async (tx) => {
@@ -255,7 +257,9 @@ export async function updateScene(sceneId: string, _prev: SceneFormState, formDa
       if (characterIds.length) {
         await tx
           .insert(sceneCharacters)
-          .values([...new Set(characterIds)].map((characterId) => ({ sceneId: id.data, characterId })));
+          .values(
+            [...new Set(characterIds)].map((characterId) => ({ sceneId: id.data, characterId, lookId: lookIds.get(characterId) ?? null })),
+          );
       }
       await syncSceneStatus(tx, id.data);
       return scene.planId;
@@ -569,11 +573,18 @@ export async function startManualJob(sceneId: string, outputKind: string): Promi
       .innerJoin(productionPlans, eq(productionScenes.planId, productionPlans.id))
       .where(eq(productionScenes.id, id.data));
     if (!row) return { ok: false, message: "Scene not found" };
-    const linked = await db
-      .select({ name: characters.name, visualDescription: characters.visualDescription })
-      .from(sceneCharacters)
-      .innerJoin(characters, eq(sceneCharacters.characterId, characters.id))
-      .where(eq(sceneCharacters.sceneId, id.data));
+    const linked = (
+      await db
+        .select({
+          name: characters.name,
+          visualDescription: characters.visualDescription,
+          looks: characters.looks,
+          lookId: sceneCharacters.lookId,
+        })
+        .from(sceneCharacters)
+        .innerJoin(characters, eq(sceneCharacters.characterId, characters.id))
+        .where(eq(sceneCharacters.sceneId, id.data))
+    ).map(({ lookId, ...c }) => resolveLook(c, lookId));
     const music = kind.data === "video" ? await loadClipMusic(row.plan, row.scene) : null;
     await db.transaction(async (tx) => {
       await tx.insert(generationJobs).values({

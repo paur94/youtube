@@ -48,7 +48,12 @@ Scene detail (the most important part of your job): every scene is produced with
 - soundEffects: the specific sounds in beat order (for example "deep rumble", "birds flapping away").
 - musicMood: the overall music direction for the video.
 
-Example of the expected level of detail (for depth and format only; never reuse its characters, places or plot):
+Visual style: use the brief's visual style everywhere, never the example's soft 3D. Open every visualPrompt and VIDEO PROMPT with it, write character visualDescriptions in it (materials and proportions included), and plan shots the style can show:
+- Isometric: one fixed high three-quarter isometric camera on a miniature diorama world, no perspective distortion and no eye-level or close-up shots. Characters move across the diorama while the camera stays still or glides slowly sideways; keep everyone small, fully visible and readable from above.
+- Claymation or stop-motion: handmade plasticine characters, props and sets with visible fingerprints and soft studio light. Movement is slightly stepped like stop-motion; keep it simple (walks, waves, hops, head turns) and avoid fast action, liquids, smoke and crowds.
+- Any other style: describe its materials, line, colours and light, and avoid shots it handles badly.
+
+Example of the expected level of detail (for depth and format only; never reuse its characters, places, plot or style):
   setting: Bright, dense tropical jungle with giant leaves, hanging vines, tall mossy trees and warm sun rays. A narrow sandy path curves gently uphill behind the children, so a long stretch of empty path is visible in the background.
   action: One continuous 30-second shot, no cuts. The camera is in front of the children and slowly tracks backward at their walking pace.
   0-8s: Levon and Yana walk toward the camera along the path. Levon holds the open treasure map and points at it; Yana leans in, smiling and excited. They chat happily as they walk.

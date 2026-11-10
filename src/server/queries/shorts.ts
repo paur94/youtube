@@ -58,7 +58,7 @@ export async function listShorts() {
     .from(shorts)
     .leftJoin(productionPlans, eq(shorts.planId, productionPlans.id))
     .leftJoin(productionScenes, eq(shorts.sceneId, productionScenes.id))
-    .orderBy(...orderBy);
+    .orderBy(desc(shorts.createdAt), asc(shorts.sceneNumber));
   const withOv = await withOverlays(rows.map((r) => r.short));
   return rows.map((r, i) => ({ ...r, short: withOv[i] }));
 }

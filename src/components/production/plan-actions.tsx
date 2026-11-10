@@ -45,6 +45,8 @@ import {
 } from "@/components/ui/select";
 import { HIGGSFIELD_MODELS } from "@/lib/higgsfield";
 import { ASPECT_RATIOS, CLIP_MUSIC_LABELS, CLIP_MUSIC_MODES } from "@/lib/production";
+import { VisualStylePreset } from "@/components/visual-style-preset";
+import { cn } from "@/lib/utils";
 import {
   addScene,
   createProductionPlan,
@@ -112,13 +114,13 @@ export function NewPlanButton({ stories }: { stories: StoryChoice[] }) {
   );
 }
 
-export function DeletePlanButton({ planId, title }: { planId: string; title: string }) {
+export function DeletePlanButton({ planId, title, className }: { planId: string; title: string; className?: string }) {
   const [open, setOpen] = useState(false);
   const [pending, run] = useAction();
   const router = useRouter();
   return (
     <>
-      <Button variant="ghost" size="icon" aria-label="Delete plan" onClick={() => setOpen(true)} disabled={pending}>
+      <Button variant="ghost" size="icon" className={className} aria-label={`Delete “${title}”`} onClick={() => setOpen(true)} disabled={pending}>
         <Trash2Icon />
       </Button>
       <AlertDialog open={open} onOpenChange={setOpen}>
@@ -183,15 +185,33 @@ export function SceneOrderButtons({ sceneId, first, last }: { sceneId: string; f
   );
 }
 
-export function DeleteSceneButton({ sceneId, planId, title }: { sceneId: string; planId: string; title: string }) {
+export function DeleteSceneButton({
+  sceneId,
+  planId,
+  title,
+  compact = false,
+}: {
+  sceneId: string;
+  planId: string;
+  title: string;
+  /** Icon-only, for the plan's scene list. */
+  compact?: boolean;
+}) {
   const [open, setOpen] = useState(false);
   const [pending, run] = useAction();
   const router = useRouter();
   return (
     <>
-      <Button variant="ghost" size="sm" onClick={() => setOpen(true)} disabled={pending}>
+      <Button
+        variant="ghost"
+        size={compact ? "icon" : "sm"}
+        className={cn(compact && "relative z-10 shrink-0 text-muted-foreground hover:text-destructive")}
+        aria-label={compact ? `Delete “${title}”` : undefined}
+        onClick={() => setOpen(true)}
+        disabled={pending}
+      >
         <Trash2Icon />
-        Delete scene
+        {!compact && "Delete scene"}
       </Button>
       <AlertDialog open={open} onOpenChange={setOpen}>
         <AlertDialogContent>
@@ -262,6 +282,7 @@ export function PlanSettings({
       )}
       <div className="grid min-w-0 gap-1.5">
         <Label htmlFor={`${id}-style`}>Visual style</Label>
+        <VisualStylePreset value={values.visualStyle} onSelect={(v) => setValues({ ...values, visualStyle: v })} />
         <Input
           id={`${id}-style`}
           value={values.visualStyle}

@@ -1,36 +1,46 @@
 "use client";
 
-import { TriangleAlertIcon } from "lucide-react";
+import { PencilIcon, TriangleAlertIcon } from "lucide-react";
+import Link from "next/link";
 import { startTransition, useActionState, useEffect, useEffectEvent, useId, useState } from "react";
 import { toast } from "sonner";
 
 import { Field } from "@/components/form-fields";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import type { ProductionScene } from "@/db/schema";
 import { readOverlays } from "@/lib/overlays";
-import { findPromptConcerns, type SceneFormState } from "@/lib/production";
+import { findPromptConcerns, resolveLook, type SceneFormState } from "@/lib/production";
 import { formatDialogue } from "@/lib/stories";
 import { updateScene } from "@/server/actions/production";
 import type { CharacterOption } from "@/server/queries/production";
 
 import { OverlayFields } from "./overlay-fields";
 
+// Radix Select needs a non-empty value for the "no look picked" option.
+const DEFAULT_LOOK = "default";
+
 export function SceneForm({
   scene,
   characters,
   linkedIds,
+  lookIds,
 }: {
   scene: ProductionScene;
   characters: CharacterOption[];
   linkedIds: string[];
+  /** The look each linked character uses; null or missing is the default description. */
+  lookIds: Record<string, string | null>;
 }) {
   const [state, formAction, pending] = useActionState<SceneFormState, FormData>(
     updateScene.bind(null, scene.id),
     null,
   );
   const [prompt, setPrompt] = useState(scene.visualPrompt);
+  const [linked, setLinked] = useState(linkedIds);
+  const [looks, setLooks] = useState(lookIds);
   const id = useId();
   const errors = state && !state.ok ? state.errors : undefined;
   const concerns = findPromptConcerns(prompt);
@@ -105,7 +115,8 @@ export function SceneForm({
                   type="checkbox"
                   name="characterIds"
                   value={c.id}
-                  defaultChecked={linkedIds.includes(c.id)}
+                  checked={linked.includes(c.id)}
+                  onChange={(e) => setLinked(e.target.checked ? [...linked, c.id] : linked.filter((l) => l !== c.id))}
                   className="size-3.5 accent-primary"
                 />
                 {c.name}
@@ -114,8 +125,52 @@ export function SceneForm({
             ))}
           </div>
         )}
+        {characters
+          .filter((c) => linked.includes(c.id))
+          .map((c) => {
+            const look = resolveLook(c, looks[c.id] ?? null);
+            return (
+              <div key={c.id} className="grid gap-1.5 rounded-md border bg-background/40 p-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-sm font-medium">{c.name}</span>
+                  {c.looks.length > 0 ? (
+                    <Select
+                      value={look.lookLabel ? (looks[c.id] ?? DEFAULT_LOOK) : DEFAULT_LOOK}
+                      onValueChange={(v) => setLooks({ ...looks, [c.id]: v === DEFAULT_LOOK ? null : v })}
+                    >
+                      <SelectTrigger size="sm" aria-label={`Look for ${c.name}`} className="text-xs">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value={DEFAULT_LOOK}>Default look</SelectItem>
+                        {c.looks.map((l) => (
+                          <SelectItem key={l.id} value={l.id}>
+                            {l.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  ) : (
+                    <span className="text-xs text-muted-foreground">Default look</span>
+                  )}
+                  {look.lookLabel && <input type="hidden" name="characterLooks" value={`${c.id}:${looks[c.id]}`} />}
+                  <Link
+                    href={`/characters/${c.id}`}
+                    className="ml-auto inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-primary"
+                  >
+                    <PencilIcon className="size-3" />
+                    Edit looks
+                  </Link>
+                </div>
+                <p className="line-clamp-2 text-xs text-muted-foreground" title={look.visualDescription}>
+                  {look.visualDescription}
+                </p>
+              </div>
+            );
+          })}
         <p className="text-xs text-muted-foreground">
-          Each linked character&apos;s library description is added to the prompt to keep them consistent.
+          The picked look of each linked character is added to the prompt to keep them consistent. Looks are written on the
+          character&apos;s page.
         </p>
       </fieldset>
 

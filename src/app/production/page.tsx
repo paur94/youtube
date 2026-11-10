@@ -6,7 +6,7 @@ import { Suspense } from "react";
 
 import { PageHeader } from "@/components/page-header";
 import { PlanStatusBadge } from "@/components/production/badges";
-import { NewPlanButton } from "@/components/production/plan-actions";
+import { DeletePlanButton, NewPlanButton } from "@/components/production/plan-actions";
 import { ProgressBar } from "@/components/production/progress";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -96,32 +96,35 @@ async function ProductionData() {
             plans.map((plan) => {
               const progress = summarizeProgress(plan.scenes);
               return (
-                <Link key={plan.id} href={`/production/${plan.id}`} className="group">
-                  <Card className="gap-3 py-4 transition-colors group-hover:border-primary/40">
-                    <CardContent className="grid gap-3 px-4">
-                      <div className="flex flex-wrap items-start justify-between gap-2">
-                        <div>
-                          <p className="font-medium">{plan.title}</p>
-                          <p className="text-xs text-muted-foreground">
-                            {plan.storyId ? "From an approved story" : "Story deleted"} · Updated{" "}
-                            {dateFormat.format(plan.updatedAt)}
-                          </p>
-                        </div>
-                        <PlanStatusBadge status={plan.status} />
+                <Card key={plan.id} className="relative gap-3 py-4 transition-colors hover:border-primary/40">
+                  <CardContent className="grid gap-3 px-4">
+                    <div className="flex flex-wrap items-start justify-between gap-2">
+                      <div>
+                        <Link href={`/production/${plan.id}`} className="font-medium after:absolute after:inset-0 hover:text-primary">
+                          {plan.title}
+                        </Link>
+                        <p className="text-xs text-muted-foreground">
+                          {plan.storyId ? "From an approved story" : "Story deleted"} · Updated{" "}
+                          {dateFormat.format(plan.updatedAt)}
+                        </p>
                       </div>
-                      <ProgressBar progress={progress} />
-                      <p className="text-xs text-muted-foreground">
-                        <span className="text-foreground tabular-nums">
-                          {progress.approved}/{progress.total}
-                        </span>{" "}
-                        scenes approved ({progress.percent}%)
-                        {progress.counts.review > 0 && ` · ${progress.counts.review} need review`}
-                        {progress.counts.generating > 0 && ` · ${progress.counts.generating} generating`}
-                        {progress.counts.failed > 0 && ` · ${progress.counts.failed} failed`}
-                      </p>
-                    </CardContent>
-                  </Card>
-                </Link>
+                      <div className="flex items-center gap-1">
+                        <PlanStatusBadge status={plan.status} />
+                        <DeletePlanButton planId={plan.id} title={plan.title} className="relative z-10 shrink-0 text-muted-foreground hover:text-destructive" />
+                      </div>
+                    </div>
+                    <ProgressBar progress={progress} />
+                    <p className="text-xs text-muted-foreground">
+                      <span className="text-foreground tabular-nums">
+                        {progress.approved}/{progress.total}
+                      </span>{" "}
+                      scenes approved ({progress.percent}%)
+                      {progress.counts.review > 0 && ` · ${progress.counts.review} need review`}
+                      {progress.counts.generating > 0 && ` · ${progress.counts.generating} generating`}
+                      {progress.counts.failed > 0 && ` · ${progress.counts.failed} failed`}
+                    </p>
+                  </CardContent>
+                </Card>
               );
             })
           )}

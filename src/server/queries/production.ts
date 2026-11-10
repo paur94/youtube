@@ -137,7 +137,7 @@ export async function getScene(sceneId: string) {
       .where(eq(productionScenes.planId, row.plan.id))
       .orderBy(asc(productionScenes.position), asc(productionScenes.createdAt)),
     db
-      .select({ characterId: sceneCharacters.characterId })
+      .select({ characterId: sceneCharacters.characterId, lookId: sceneCharacters.lookId })
       .from(sceneCharacters)
       .where(eq(sceneCharacters.sceneId, sceneId)),
     db
@@ -176,6 +176,8 @@ export async function getScene(sceneId: string) {
     previousId: siblings[index - 1]?.id ?? null,
     nextId: siblings[index + 1]?.id ?? null,
     characterIds,
+    /** The look each linked character uses in this scene; null is the default description. */
+    lookIds: Object.fromEntries(linked.map((l) => [l.characterId, l.lookId])) as Record<string, string | null>,
     jobs,
     assets: sceneAssets,
     references,
@@ -250,7 +252,7 @@ export async function listCharacters() {
 export async function getCharacter(id: string) {
   const [character] = await db.select().from(characters).where(eq(characters.id, id));
   if (!character) return null;
-  const [references, appearances] = await Promise.all([
+  const [references, appearances, lookUsage] = await Promise.all([
     db
       .select()
       .from(assets)
@@ -261,8 +263,19 @@ export async function getCharacter(id: string) {
       .from(storyCharacters)
       .innerJoin(stories, eq(storyCharacters.storyId, stories.id))
       .where(eq(storyCharacters.characterId, id)),
+    db
+      .select({ lookId: sceneCharacters.lookId, scenes: sql<number>`count(*)`.mapWith(Number) })
+      .from(sceneCharacters)
+      .where(eq(sceneCharacters.characterId, id))
+      .groupBy(sceneCharacters.lookId),
   ]);
-  return { ...character, references, appearances };
+  // Scenes per look; links to a removed look fall back to (and are counted as) the default one.
+  const sceneCounts = new Map<string | null, number>();
+  for (const { lookId, scenes } of lookUsage) {
+    const key = lookId && character.looks.some((l) => l.id === lookId) ? lookId : null;
+    sceneCounts.set(key, (sceneCounts.get(key) ?? 0) + scenes);
+  }
+  return { ...character, references, appearances, sceneCounts };
 }
 
 export async function getCharacterOptions() {
@@ -272,6 +285,7 @@ export async function getCharacterOptions() {
       name: characters.name,
       status: characters.status,
       visualDescription: characters.visualDescription,
+      looks: characters.looks,
     })
     .from(characters)
     .where(ne(characters.status, "archived"))

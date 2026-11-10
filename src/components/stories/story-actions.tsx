@@ -100,14 +100,14 @@ export function EditBriefButton({
   );
 }
 
-export function DeleteStoryButton({ storyId, title }: { storyId: string; title: string }) {
+export function DeleteStoryButton({ storyId, title, className }: { storyId: string; title: string; className?: string }) {
   const [open, setOpen] = useState(false);
   const [pending, run] = useAction();
   const router = useRouter();
 
   return (
     <>
-      <Button variant="ghost" size="icon" aria-label="Delete story" onClick={() => setOpen(true)} disabled={pending}>
+      <Button variant="ghost" size="icon" className={className} aria-label={`Delete “${title}”`} onClick={() => setOpen(true)} disabled={pending}>
         <Trash2Icon />
       </Button>
       <AlertDialog open={open} onOpenChange={setOpen}>

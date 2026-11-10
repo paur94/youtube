@@ -13,6 +13,7 @@ import {
   AddSceneButton,
   AssemblyPanel,
   DeletePlanButton,
+  DeleteSceneButton,
   JobPoller,
   PlanSettings,
   SceneOrderButtons,
@@ -185,6 +186,7 @@ async function PlanData({ params }: Pick<PageProps<"/production/[id]">, "params"
                       {scene.error && <p className="line-clamp-1 text-xs text-rose-300">{scene.error}</p>}
                     </div>
                     <SceneStatusBadge status={scene.status} />
+                    <DeleteSceneButton sceneId={scene.id} planId={plan.id} title={scene.title} compact />
                   </li>
                 ))}
               </ol>

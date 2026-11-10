@@ -138,7 +138,7 @@ function IdeasTable({ ideas }: { ideas: Awaited<ReturnType<typeof listIdeas>> })
           <TableHead className="hidden xl:table-cell">Age</TableHead>
           <TableHead className="hidden sm:table-cell">Priority</TableHead>
           <TableHead className="hidden xl:table-cell">Created</TableHead>
-          <TableHead className="w-12" />
+          <TableHead className="w-20" />
         </TableRow>
       </TableHeader>
       <TableBody>

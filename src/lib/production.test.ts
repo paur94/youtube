@@ -19,6 +19,9 @@ import {
   parseCharacterForm,
   parseSceneForm,
   parseTimeline,
+  outfitOf,
+  referToOutfits,
+  resolveLook,
   IMAGE_QUALITY_RULES,
   VIDEO_QUALITY_RULES,
   videoQualityRules,
@@ -603,6 +606,85 @@ describe("forms", () => {
     form.set("visualDescription", "duck");
     expect(parseCharacterForm(form).success).toBe(false);
     form.set("visualDescription", "Small round yellow duckling with a blue raincoat");
-    expect(parseCharacterForm(form).data).toMatchObject({ name: "Pip", status: "draft" });
+    expect(parseCharacterForm(form).data).toMatchObject({ name: "Pip", status: "draft", looks: [] });
+  });
+
+  it("parses extra looks and rejects duplicate names", () => {
+    const form = new FormData();
+    form.set("name", "Pip");
+    form.set("visualDescription", "Small round yellow duckling with a blue raincoat");
+    const looks = [{ id: "a1", label: "Pajamas", visualDescription: "Small round yellow duckling in striped pajamas" }];
+    form.set("looks", JSON.stringify(looks));
+    expect(parseCharacterForm(form).data?.looks).toEqual(looks);
+    form.set("looks", JSON.stringify([...looks, { ...looks[0], id: "a2", label: "pajamas" }]));
+    expect(parseCharacterForm(form).success).toBe(false);
+  });
+
+  it("uses the picked look, and the default one when it is missing", () => {
+    const pip = {
+      visualDescription: "Yellow duckling, blue raincoat",
+      looks: [{ id: "a1", label: "Pajamas", visualDescription: "Yellow duckling, striped pajamas" }],
+    };
+    expect(resolveLook(pip, "a1")).toMatchObject({ visualDescription: "Yellow duckling, striped pajamas", lookLabel: "Pajamas" });
+    expect(resolveLook(pip, null)).toMatchObject({ visualDescription: "Yellow duckling, blue raincoat", lookLabel: null });
+    expect(resolveLook(pip, "removed")).toMatchObject({ visualDescription: "Yellow duckling, blue raincoat", lookLabel: null });
+  });
+
+  describe("outfits copied into the prompt", () => {
+    const levon = {
+      name: "Levon",
+      visualDescription: "Slim 5-year-old boy. He wears a sky-blue sporty T-shirt, navy-blue shorts and running sneakers. Small ears.",
+      looks: [{ id: "a1", label: "Everyday", visualDescription: "Slim 5-year-old boy. He wears a plain black T-shirt, denim-blue shorts and white sneakers." }],
+    };
+
+    it("finds the outfit in a description", () => {
+      expect(outfitOf(levon.visualDescription)).toBe("a sky-blue sporty T-shirt, navy-blue shorts and running sneakers");
+      expect(outfitOf("A small yellow duckling.")).toBeNull();
+    });
+
+    it("points at the character description instead of repeating its outfit", () => {
+      const visualPrompt = "Levon is a slim boy. He wears a sky-blue sporty T-shirt,\nnavy-blue shorts and running sneakers; he waves.";
+      const prompt = buildGenerationPrompt({ visualPrompt, characters: [resolveLook(levon, null)] });
+      expect(prompt).toContain("He wears the outfit in Levon's character description; he waves.");
+      expect(prompt.match(/sky-blue sporty/g)).toHaveLength(1); // Only in the description itself.
+    });
+
+    it("points at the picked look when the prompt copied another one", () => {
+      const visualPrompt = "He wears a sky-blue sporty T-shirt, navy-blue shorts and running sneakers.";
+      const prompt = buildGenerationPrompt({ visualPrompt, characters: [resolveLook(levon, "a1")] });
+      expect(prompt).toContain("He wears the outfit in Levon's character description.");
+      expect(prompt).not.toContain("sky-blue");
+      expect(prompt).toContain("plain black T-shirt");
+    });
+
+    it("keeps clothing written only for the scene", () => {
+      const visualPrompt = "He wears a red superhero cape over his pajamas.";
+      expect(referToOutfits(visualPrompt, [resolveLook(levon, null)])).toBe(visualPrompt);
+    });
+
+    it("keeps the outfit when the prompt doesn't carry the description", () => {
+      const visualPrompt = "He wears a sky-blue sporty T-shirt, navy-blue shorts and running sneakers.";
+      expect(referToOutfits(visualPrompt, [])).toBe(visualPrompt);
+      const prompt = buildVideoPrompt({
+        visualPrompt,
+        action: "",
+        dialogue: [],
+        characters: [resolveLook(levon, null)],
+        durationSeconds: 5,
+        startImage: true,
+        voiced: false,
+      });
+      expect(prompt).toContain("sky-blue sporty T-shirt, navy-blue shorts");
+    });
+  });
+
+  it("keeps the look picked for each linked character", () => {
+    const form = new FormData();
+    form.set("title", "Scene");
+    form.set("durationSeconds", "5");
+    const id = "6f9619ff-8b86-4d01-b42d-00cf4fc964ff";
+    form.append("characterIds", id);
+    form.append("characterLooks", `${id}:a1`);
+    expect(parseSceneForm(form).data?.characterLooks).toEqual([`${id}:a1`]);
   });
 });

@@ -24,7 +24,6 @@ import {
   DropdownMenuLabel,
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
-  DropdownMenuSeparator,
   DropdownMenuSub,
   DropdownMenuSubContent,
   DropdownMenuSubTrigger,
@@ -99,13 +98,18 @@ export function IdeaRowActions({ idea }: { idea: Idea & { storyId: string | null
               </DropdownMenuRadioGroup>
             </DropdownMenuSubContent>
           </DropdownMenuSub>
-          <DropdownMenuSeparator />
-          <DropdownMenuItem variant="destructive" onSelect={() => setDeleteOpen(true)}>
-            <Trash2Icon />
-            Delete
-          </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
+      <Button
+        variant="ghost"
+        size="icon-sm"
+        className="text-muted-foreground hover:text-destructive"
+        disabled={pending}
+        onClick={() => setDeleteOpen(true)}
+        aria-label={`Delete “${idea.title}”`}
+      >
+        <Trash2Icon />
+      </Button>
 
       <IdeaFormDialog open={editOpen} onOpenChange={setEditOpen} idea={idea} />
 

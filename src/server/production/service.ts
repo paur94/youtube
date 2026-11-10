@@ -67,6 +67,7 @@ import {
   JOB_TIMEOUT_MS,
   type PlanStatus,
   POLLABLE_JOB_STATUSES,
+  resolveLook,
 } from "@/lib/production";
 import { readSceneContinuity } from "@/lib/story-qc";
 import { downloadMedia, MediaError, resolveMediaPath, saveInputFile } from "@/server/media/storage";
@@ -253,17 +254,21 @@ export async function loadSceneForGeneration(sceneId: string) {
     .innerJoin(productionPlans, eq(productionScenes.planId, productionPlans.id))
     .where(eq(productionScenes.id, sceneId));
   if (!row) return null;
-  const linked = await db
-    .select({
-      id: characters.id,
-      name: characters.name,
-      visualDescription: characters.visualDescription,
-      primaryReferenceId: characters.primaryReferenceId,
-    })
-    .from(sceneCharacters)
-    .innerJoin(characters, eq(sceneCharacters.characterId, characters.id))
-    .where(eq(sceneCharacters.sceneId, sceneId))
-    .orderBy(asc(characters.name));
+  const linked = (
+    await db
+      .select({
+        id: characters.id,
+        name: characters.name,
+        visualDescription: characters.visualDescription,
+        looks: characters.looks,
+        lookId: sceneCharacters.lookId,
+        primaryReferenceId: characters.primaryReferenceId,
+      })
+      .from(sceneCharacters)
+      .innerJoin(characters, eq(sceneCharacters.characterId, characters.id))
+      .where(eq(sceneCharacters.sceneId, sceneId))
+      .orderBy(asc(characters.name))
+  ).map(({ lookId, ...c }) => resolveLook(c, lookId));
   const prompt = buildGenerationPrompt({
     visualPrompt: row.scene.visualPrompt,
     characters: linked,

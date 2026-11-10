@@ -23,7 +23,7 @@ import { HIGGSFIELD_MODELS } from "@/lib/higgsfield";
 import { readSceneFrames } from "@/lib/kling";
 import { MODULES } from "@/lib/navigation";
 import { readOverlays } from "@/lib/overlays";
-import { buildGenerationPrompt, buildVideoPrompt, findPromptConcerns, POLLABLE_JOB_STATUSES } from "@/lib/production";
+import { buildGenerationPrompt, buildVideoPrompt, findPromptConcerns, POLLABLE_JOB_STATUSES, resolveLook } from "@/lib/production";
 import { formatDialogue } from "@/lib/stories";
 import { getClaudeConfig } from "@/server/ai/claude";
 import { loadClipMusic } from "@/server/production/service";
@@ -95,7 +95,9 @@ async function SceneData({ params }: Pick<Props, "params">) {
 
   const { scene, plan } = detail;
   const higgsfield = getHiggsfieldConfig();
-  const linked = characterOptions.filter((c) => detail.characterIds.includes(c.id));
+  const linked = characterOptions
+    .filter((c) => detail.characterIds.includes(c.id))
+    .map((c) => resolveLook(c, detail.lookIds[c.id] ?? null));
   const prompt = buildGenerationPrompt({ visualPrompt: scene.visualPrompt, characters: linked, visualStyle: plan.visualStyle });
   const music = await loadClipMusic(plan, scene);
   // Clips are prompted from the action and dialogue (no voice-over); the exact text depends on whether the
@@ -118,7 +120,10 @@ async function SceneData({ params }: Pick<Props, "params">) {
   // may not be in the visual prompt at all. Each is labelled with the field to edit.
   const sources: [string, string][] = [
     ["Visual prompt", scene.visualPrompt],
-    ...linked.map((c): [string, string] => [`Character “${c.name}” (Characters page)`, `${c.name} ${c.visualDescription}`]),
+    ...linked.map((c): [string, string] => [
+      `Character “${c.name}”${c.lookLabel ? `, look “${c.lookLabel}”` : ""} (Characters page)`,
+      `${c.name} ${c.visualDescription}`,
+    ]),
     ["Plan visual style", plan.visualStyle ?? ""],
     ["Action", scene.action],
     ["Dialogue", formatDialogue(scene.dialogue)],
@@ -220,7 +225,7 @@ async function SceneData({ params }: Pick<Props, "params">) {
             <CardDescription>Edits apply to new generations. Existing assets keep the prompt they were made with.</CardDescription>
           </CardHeader>
           <CardContent>
-            <SceneForm scene={scene} characters={characterOptions} linkedIds={detail.characterIds} />
+            <SceneForm scene={scene} characters={characterOptions} linkedIds={detail.characterIds} lookIds={detail.lookIds} />
           </CardContent>
         </Card>
 

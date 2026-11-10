@@ -188,7 +188,48 @@ export function formatUsd(usd: number) {
 
 // ---------- Prompts ----------
 
-export type PromptCharacter = { name: string; visualDescription: string };
+export type PromptCharacter = {
+  name: string;
+  visualDescription: string;
+  /** Every description the character has (default look and the others), to spot outfits copied into a prompt. */
+  allLooks?: string[];
+};
+
+/** An alternative description of a character (another outfit, age or season), picked per scene. */
+export type CharacterLook = { id: string; label: string; visualDescription: string };
+
+/** The description a scene uses: the picked look, or the default one when none is picked or it was removed. */
+export function resolveLook<T extends { visualDescription: string; looks: CharacterLook[] }>(character: T, lookId: string | null) {
+  const look = lookId ? character.looks.find((l) => l.id === lookId) : undefined;
+  return {
+    ...character,
+    visualDescription: look?.visualDescription ?? character.visualDescription,
+    lookLabel: look?.label ?? null,
+    allLooks: [character.visualDescription, ...character.looks.map((l) => l.visualDescription)],
+  };
+}
+
+/** The clothing a description gives, e.g. "a plain black T-shirt and white sneakers" from "He wears a plain black T-shirt and white sneakers." */
+export function outfitOf(description: string) {
+  return /\b(?:wears|wearing|dressed in)\s+([^.;]{8,}?)\s*(?:[.;]|$)/i.exec(description)?.[1].trim() ?? null;
+}
+
+/**
+ * Replaces an outfit copied word for word from one of a character's looks with a pointer to the
+ * character description that the prompt carries, so a scene that picks another look isn't
+ * contradicted by its own text. Clothing written only for the scene is left as it is.
+ */
+export function referToOutfits(prompt: string, characters: PromptCharacter[]) {
+  let out = prompt;
+  for (const c of characters) {
+    const outfits = new Set((c.allLooks ?? [c.visualDescription]).map(outfitOf).filter((o): o is string => Boolean(o)));
+    for (const outfit of [...outfits].sort((a, b) => b.length - a.length)) {
+      const pattern = new RegExp(escapeRegExp(outfit).replace(/\s+/g, "\\s+"), "gi");
+      out = out.replace(pattern, `the outfit in ${c.name.trim()}'s character description`);
+    }
+  }
+  return out;
+}
 
 /**
  * The text sent to the provider (or copied for manual generation): the scene's visual prompt,
@@ -219,8 +260,9 @@ function unpunctuated(text: string) {
 }
 
 function describeScene(input: { visualPrompt: string; characters: PromptCharacter[]; visualStyle?: string | null }) {
-  const parts = [input.visualPrompt.trim()];
   const described = input.characters.filter((c) => c.visualDescription.trim());
+  // Only described characters: the pointer needs their description below to point at.
+  const parts = [referToOutfits(input.visualPrompt.trim(), described)];
   if (described.length) {
     parts.push(
       "Keep these characters exactly consistent: " +
@@ -824,6 +866,8 @@ export const sceneInputSchema = z
     notes: text(4000),
     overlays: z.array(sceneOverlaySchema, "Invalid overlays").max(MAX_OVERLAYS * 2).default([]),
     characterIds: z.array(z.uuid()).max(30).default([]),
+    /** `characterId:lookId` for linked characters that use a look other than their default one. */
+    characterLooks: z.array(z.string().regex(/^[0-9a-f-]{36}:[\w-]{1,40}$/)).max(30).default([]),
   })
   .superRefine((scene, ctx) => {
     for (const message of validateOverlays(scene.overlays, scene.durationSeconds)) {
@@ -858,6 +902,7 @@ export function parseSceneForm(formData: FormData) {
     notes: formData.get("notes") ?? "",
     overlays: parseJson(formData.get("overlays")),
     characterIds: formData.getAll("characterIds"),
+    characterLooks: formData.getAll("characterLooks").filter(Boolean),
   });
 }
 
@@ -870,6 +915,18 @@ export const characterInputSchema = z.object({
     .trim()
     .min(10, "Describe the look in enough detail to keep it consistent")
     .max(2000),
+  looks: z
+    .array(
+      z.object({
+        id: z.string().regex(/^[\w-]{1,40}$/),
+        label: z.string().trim().min(1, "Name every look").max(80),
+        visualDescription: z.string().trim().min(10, "Describe every look in enough detail to keep it consistent").max(2000),
+      }),
+      "Invalid looks",
+    )
+    .max(20, "At most 20 looks")
+    .refine((looks) => new Set(looks.map((l) => l.label.toLowerCase())).size === looks.length, "Give each look a different name")
+    .default([]),
   notes: text(2000),
   status: z.enum(CHARACTER_STATUSES).default("draft"),
 });
@@ -885,6 +942,7 @@ export function parseCharacterForm(formData: FormData) {
     role: formData.get("role") ?? "",
     description: formData.get("description") ?? "",
     visualDescription: formData.get("visualDescription") ?? "",
+    looks: parseJson(formData.get("looks")),
     notes: formData.get("notes") ?? "",
     status: formData.get("status") ?? "draft",
   });

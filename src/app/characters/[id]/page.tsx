@@ -49,7 +49,14 @@ async function CharacterData({ params }: Pick<PageProps<"/characters/[id]">, "pa
   const [character, summaries] = await Promise.all([getCharacter(id), listCharacters()]);
   if (!character) notFound();
   const sceneCount = summaries.find((s) => s.character.id === id)?.sceneCount ?? 0;
-  const concerns = findPromptConcerns(`${character.name} ${character.visualDescription}`);
+  const looks = [
+    { id: null, label: "Default look", visualDescription: character.visualDescription },
+    ...character.looks,
+  ].map((look) => ({
+    ...look,
+    scenes: character.sceneCounts.get(look.id) ?? 0,
+    concerns: findPromptConcerns(`${character.name} ${look.visualDescription}`),
+  }));
 
   return (
     <>
@@ -64,13 +71,29 @@ async function CharacterData({ params }: Pick<PageProps<"/characters/[id]">, "pa
         <div className="grid min-w-0 gap-6 lg:col-span-2">
           <Card>
             <CardHeader>
-              <CardTitle>Consistent description</CardTitle>
-              <CardDescription>Appended to every scene prompt that includes {character.name}.</CardDescription>
+              <CardTitle>{looks.length > 1 ? "Looks" : "Consistent description"}</CardTitle>
+              <CardDescription>
+                Appended to every scene prompt that includes {character.name}.
+                {looks.length > 1 ? " Each scene picks which look to use; " : " "}
+                Edit to change the description or add another look (outfit, age, season).
+              </CardDescription>
             </CardHeader>
             <CardContent className="grid gap-3">
-              <p className="text-sm whitespace-pre-line">{character.visualDescription}</p>
-              {concerns.length > 0 && <p className="text-xs text-rose-300">{concerns.join(". ")}.</p>}
-              <CopyButton text={character.visualDescription} label="Copy description" />
+              {looks.map((look) => (
+                <div key={look.id ?? "default"} className={looks.length > 1 ? "grid gap-2 rounded-lg border p-3" : "grid gap-3"}>
+                  {looks.length > 1 && (
+                    <p className="flex flex-wrap items-baseline justify-between gap-2 text-sm font-medium">
+                      {look.label}
+                      <span className="text-xs font-normal text-muted-foreground">
+                        {look.scenes} {look.scenes === 1 ? "scene" : "scenes"}
+                      </span>
+                    </p>
+                  )}
+                  <p className="text-sm whitespace-pre-line">{look.visualDescription}</p>
+                  {look.concerns.length > 0 && <p className="text-xs text-rose-300">{look.concerns.join(". ")}.</p>}
+                  <CopyButton text={look.visualDescription} label="Copy description" />
+                </div>
+              ))}
               {character.description && (
                 <div>
                   <p className="text-xs text-muted-foreground">Personality</p>

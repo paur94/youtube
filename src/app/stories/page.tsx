@@ -5,6 +5,7 @@ import { connection } from "next/server";
 import { Suspense } from "react";
 
 import { PageHeader } from "@/components/page-header";
+import { DeleteStoryButton } from "@/components/stories/story-actions";
 import { StoryStatusBadge } from "@/components/stories/story-status-badge";
 import { UsageStats } from "@/components/stories/usage-summary";
 import { Button } from "@/components/ui/button";
@@ -102,7 +103,8 @@ async function StoriesData() {
                 <TableHead className="hidden md:table-cell">Age</TableHead>
                 <TableHead className="hidden sm:table-cell">Length</TableHead>
                 <TableHead>Status</TableHead>
-                <TableHead className="hidden pr-4 lg:table-cell">Updated</TableHead>
+                <TableHead className="hidden lg:table-cell">Updated</TableHead>
+                <TableHead className="w-12" />
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -126,8 +128,15 @@ async function StoriesData() {
                   <TableCell>
                     <StoryStatusBadge status={story.status} />
                   </TableCell>
-                  <TableCell className="hidden pr-4 text-muted-foreground lg:table-cell">
+                  <TableCell className="hidden text-muted-foreground lg:table-cell">
                     {dateFormat.format(story.updatedAt)}
+                  </TableCell>
+                  <TableCell className="pr-4 text-right">
+                    <DeleteStoryButton
+                      storyId={story.id}
+                      title={story.generatedTitle ?? story.title}
+                      className="relative z-10 shrink-0 text-muted-foreground hover:text-destructive"
+                    />
                   </TableCell>
                 </TableRow>
               ))}
