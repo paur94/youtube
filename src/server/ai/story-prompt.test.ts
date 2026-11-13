@@ -31,6 +31,16 @@ describe("buildStoryPrompt", () => {
     );
   });
 
+  it("adds the library looks of characters the brief lists by name", () => {
+    const library = [
+      { name: "Pip", visualDescription: "Yellow duckling", looks: [{ label: "Winter", visualDescription: "Pip in a red scarf" }] },
+      { name: "Moss", visualDescription: "Green frog", looks: [] },
+    ];
+    const { user } = buildStoryPrompt({ ...sampleInput, characters: "Pip" }, { library });
+    expect(user).toContain("- Pip: Yellow duckling\n  - look \"Winter\": Pip in a red scarf");
+    expect(user).not.toContain("Green frog");
+  });
+
   it("includes the current draft and notes when revising", () => {
     const { user } = buildStoryPrompt(sampleInput, { previous: sampleContent, notes: "Make it shorter" });
     expect(user).toContain("<current_draft>");

@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import type { SceneOverlay } from "@/lib/overlays";
 import { mediaUrl } from "@/lib/production";
 import { audioSettings, type CaptionCue, MAX_CAPTION_MARGIN, MIN_CAPTION_MARGIN, MUSIC_TYPES, parseCaptionLines, validateCaptions, type VideoSettings } from "@/lib/shorts";
 import { computeFraming, OUT_H, overlayMargins } from "@/lib/short-video";
@@ -30,6 +31,8 @@ export type WorkbenchProps = {
   settings: VideoSettings;
   captionsText: string;
   captionsReviewed: boolean;
+  /** The scenes' text overlays on the Short's timeline. */
+  overlays: SceneOverlay[];
   durationSeconds: number | null;
   hook: string;
   hookSeconds: number;
@@ -106,6 +109,7 @@ export function ShortWorkbench(props: WorkbenchProps) {
                 src={props.sourceUrl}
                 settings={settings}
                 captions={cues}
+                overlays={props.overlays}
                 hook={props.hook}
                 hookSeconds={props.hookSeconds}
                 onDimensions={(w, h) => setDims({ w, h })}

@@ -127,6 +127,7 @@ async function StoryData({ params }: Pick<PageProps<"/stories/[id]">, "params">)
             latestRevision={revisions[0]?.number ?? null}
             targetDurationSeconds={story.targetDurationSeconds}
             writer={{ configured: writer.configured, model: writer.model }}
+            library={library}
           />
         </div>
 

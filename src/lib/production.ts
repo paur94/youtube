@@ -503,6 +503,50 @@ export function stripNarration(text: string) {
   return text.replace(NARRATOR_CUE_RE, "").replace(/[ \t]{2,}/g, " ").trim();
 }
 
+// A note about something added after generation: "(overlay added in post)", "burned in at final assembly".
+const POST_NOTE_RE = /\b(?:in|during) post(?:[- ]?production)?\b|\bpost[- ]production\b|\bburned[- ]in\b|\bfinal assembly\b/i;
+
+/**
+ * Splits prose into sentences without breaking inside double quotes, so a quoted "Working late. Love you."
+ * stays whole, or before a lower-case aside like "(added in post)", which belongs to the sentence before it.
+ */
+function proseSentences(text: string) {
+  const out: string[] = [];
+  let start = 0;
+  let quoted = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (ch === '"') quoted = !quoted;
+    else if (ch === "“") quoted = true;
+    else if (ch === "”") quoted = false;
+    else if (!quoted && /\s/.test(ch) && /[.!?…]["”')\]]*$/.test(text.slice(start, i)) && !/^\s*\(\p{Ll}/u.test(text.slice(i))) {
+      out.push(text.slice(start, i));
+      start = i + 1;
+    }
+  }
+  out.push(text.slice(start));
+  return out.map((s) => s.trim()).filter(Boolean);
+}
+
+/**
+ * Removes sentences about text added in post (chat bubbles, captions, labels) from action text. A
+ * video model draws whatever a prompt mentions, even next to "added in post", and bakes a garbled
+ * copy of the label into the clip. A beat keeps its time stamp; a beat with nothing else is dropped.
+ */
+export function stripPostNotes(text: string) {
+  return text
+    .split(/\r?\n/)
+    .flatMap((line) => {
+      if (!POST_NOTE_RE.test(line)) return [line];
+      const m = SEGMENT_RE.exec(line);
+      const beat = m && (m[1] || m[4] || m[5]) ? m[6] : line;
+      const kept = proseSentences(beat).filter((s) => !POST_NOTE_RE.test(s)).join(" ");
+      return kept ? [line.slice(0, line.length - beat.length) + kept] : [];
+    })
+    .join("\n")
+    .trim();
+}
+
 /**
  * The characters' spoken lines for video models that generate their own sound, in the syntax
  * Alibaba's Wan 3.0 prompt guide documents (`Name says: "line"`, "Lip sync"). There is no voice-over:
@@ -588,7 +632,8 @@ function identity(character: PromptCharacter) {
 /**
  * The prompt for a video model, following Alibaba's Wan 3.0 prompt guide: an overall line, the
  * scene's action as timed beats, then the dialogue. Clips never get a voice-over: the scene's
- * narration isn't sent and narrator cues are removed from the action. The scene's visual prompt
+ * narration isn't sent and narrator cues are removed from the action, as are notes about text
+ * added in post (see stripPostNotes). The scene's visual prompt
  * describes the keyframe (a still pose), so with a start image it is left out and the image is declared the lock for
  * characters, outfits and setting; the character bible is left out too, because its canonical outfit
  * contradicts a scene that dresses a character differently and the model follows the text over the
@@ -597,7 +642,7 @@ function identity(character: PromptCharacter) {
 export function buildVideoPrompt(input: VideoPromptInput) {
   const style = input.visualStyle && unpunctuated(input.visualStyle);
   const names = input.characters.map((c) => c.name.trim()).filter(Boolean);
-  const action = stripNarration(input.action);
+  const action = stripPostNotes(stripNarration(input.action));
   const timeline = parseTimeline(action);
   const parts: string[] = [];
 
@@ -795,6 +840,8 @@ export type SceneDraft = {
   negativePrompt: string;
   notes: string;
   characterNames: string[];
+  /** Look label picked in the Story Workshop, keyed by normalized character name. */
+  characterLooks: Record<string, string>;
 };
 
 export function clampDuration(seconds: number) {
@@ -818,6 +865,9 @@ export function scenesFromStory(content: Pick<StoryContent, "scenes">): SceneDra
       negativePrompt: DEFAULT_NEGATIVE_PROMPT,
       notes: scene.productionNotes ?? "",
       characterNames: [...new Set(scene.characters.map((c) => c.trim()).filter(Boolean))],
+      characterLooks: Object.fromEntries(
+        (scene.looks ?? []).filter((l) => l.look.trim()).map((l) => [normalizeName(l.character), l.look.trim()]),
+      ),
     }));
 }
 

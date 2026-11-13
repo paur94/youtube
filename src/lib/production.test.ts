@@ -27,6 +27,7 @@ import {
   videoQualityRules,
   scenesFromStory,
   stripNarration,
+  stripPostNotes,
   summarizeCosts,
   summarizeProgress,
 } from "./production";
@@ -253,6 +254,26 @@ describe("stripNarration", () => {
       "Yana lies down. Levon is still.",
     );
     expect(stripNarration("Levon says 'Lie on your back' and rolls back.")).toBe("Levon says 'Lie on your back' and rolls back.");
+  });
+});
+
+describe("stripPostNotes", () => {
+  it("removes sentences about text added in post, keeping the beat and its time stamp", () => {
+    expect(
+      stripPostNotes(
+        'Locked camera.\n6-10s: A floating chat-bubble label appears near the phone: "I will be late" (overlay added in post). Yana looks at the door.\n10-12s: She stands.',
+      ),
+    ).toBe("Locked camera.\n6-10s: Yana looks at the door.\n10-12s: She stands.");
+    expect(stripPostNotes("6-10s: The phone goes dark. (The message label is an overlay added in post, not part of the generated video.)")).toBe(
+      "6-10s: The phone goes dark.",
+    );
+  });
+
+  it("drops the whole note when the label's text has its own full stops, and a beat that was only the note", () => {
+    expect(stripPostNotes('0-3s: She waves.\n3-6s: A caption reads "Working late. Love you." (burned in at final assembly).\n6-9s: She sits.')).toBe(
+      "0-3s: She waves.\n6-9s: She sits.",
+    );
+    expect(stripPostNotes("Yana posts a letter in the post box. She smiles.")).toBe("Yana posts a letter in the post box. She smiles.");
   });
 });
 
@@ -538,6 +559,11 @@ describe("scenesFromStory", () => {
       notes: sampleContent.scenes[0].productionNotes,
       characterNames: ["Pip"],
     });
+  });
+
+  it("keeps the look picked for each character", () => {
+    const scene = { ...sampleContent.scenes[0], looks: [{ character: " pip ", look: "Winter" }, { character: "Moss", look: " " }] };
+    expect(scenesFromStory({ scenes: [scene] })[0].characterLooks).toEqual({ pip: "Winter" });
   });
 
   it("clamps durations to a sensible range", () => {

@@ -159,7 +159,16 @@ const sceneSchema = z.object({
   productionNotes: z.string().default(""),
   soundEffects: z.array(z.string()),
   musicMood: z.string(),
+  // Which of a library character's looks (by label) they wear here; characters not listed use their
+  // default look. Defaulted so stories saved before this field existed still parse.
+  looks: z.array(z.object({ character: z.string(), look: z.string() })).default([]),
 });
+
+/** The look label a scene picks for a character, or null for the default look. */
+export function sceneLookOf(scene: Pick<StoryScene, "looks">, characterName: string) {
+  const key = characterName.trim().toLowerCase();
+  return scene.looks.find((l) => l.character.trim().toLowerCase() === key)?.look.trim() || null;
+}
 
 export const storyContentSchema = z.object({
   title: z.string(),

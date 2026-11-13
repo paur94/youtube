@@ -316,10 +316,6 @@ function VisualStyleField({ id, defaultValue, error }: { id: string; defaultValu
   );
 }
 
-function characterLine(c: CharacterOption) {
-  return `${c.name} – ${c.visualDescription}`;
-}
-
 function CharactersField({
   id,
   defaultValue,
@@ -337,7 +333,7 @@ function CharactersField({
   const listed = (c: CharacterOption) => lines.some((l) => l.startsWith(c.name.trim().toLowerCase()));
 
   function add(c: CharacterOption) {
-    setValue((v) => (v.trim() ? `${v.trimEnd()}\n${characterLine(c)}` : characterLine(c)).slice(0, 2000));
+    setValue((v) => (v.trim() ? `${v.trimEnd()}\n${c.name}` : c.name).slice(0, 2000));
   }
 
   return (
@@ -367,7 +363,6 @@ function CharactersField({
               size="sm"
               className="h-6 px-2 text-xs"
               disabled={listed(c)}
-              title={c.visualDescription}
               onClick={() => add(c)}
             >
               <PlusIcon className="size-3" />

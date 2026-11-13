@@ -118,7 +118,7 @@ export async function createProductionPlan(storyId: string): Promise<ActionResul
         })
         .returning({ id: productionPlans.id });
 
-      const byName = await linkStoryCharacters(tx, story.id, story.title, story.content.characters);
+      const { byName, looksById } = await linkStoryCharacters(tx, story.id, story.title, story.content.characters);
       const drafts = scenesFromStory(story.content);
       for (const [position, draft] of drafts.entries()) {
         const matched = draft.characterNames.flatMap((n) => byName.get(normalizeName(n)) ?? []);
@@ -141,9 +141,18 @@ export async function createProductionPlan(storyId: string): Promise<ActionResul
           })
           .returning({ id: productionScenes.id });
         if (matched.length) {
+          // The look picked in the Story Workshop, by label; an unknown label keeps the default look.
+          const lookIdFor = (characterId: string) => {
+            const name = draft.characterNames.find((n) => byName.get(normalizeName(n)) === characterId);
+            const label = name && draft.characterLooks[normalizeName(name)];
+            if (!label) return null;
+            return looksById.get(characterId)?.find((l) => normalizeName(l.label) === normalizeName(label))?.id ?? null;
+          };
           await tx
             .insert(sceneCharacters)
-            .values([...new Set(matched)].map((characterId) => ({ sceneId: scene.id, characterId })));
+            .values(
+              [...new Set(matched)].map((characterId) => ({ sceneId: scene.id, characterId, lookId: lookIdFor(characterId) })),
+            );
         }
       }
       return { ok: true, planId: plan.id };
@@ -166,12 +175,13 @@ async function linkStoryCharacters(
   storyCharactersList: { name: string; role: string; description: string; visualDescription: string }[],
 ) {
   const library = await tx
-    .select({ id: characters.id, name: characters.name, status: characters.status })
+    .select({ id: characters.id, name: characters.name, status: characters.status, looks: characters.looks })
     .from(characters)
     .where(ne(characters.status, "archived"))
     .orderBy(asc(characters.status)); // "approved" sorts before "draft"
   const byName = new Map<string, string>();
   for (const c of library) if (!byName.has(normalizeName(c.name))) byName.set(normalizeName(c.name), c.id);
+  const looksById = new Map(library.map((c) => [c.id, c.looks]));
 
   for (const c of storyCharactersList) {
     const key = normalizeName(c.name);
@@ -192,7 +202,7 @@ async function linkStoryCharacters(
     }
     await tx.insert(storyCharacters).values({ storyId, characterId }).onConflictDoNothing();
   }
-  return byName;
+  return { byName, looksById };
 }
 
 export async function deleteProductionPlan(planId: string): Promise<ActionResult> {

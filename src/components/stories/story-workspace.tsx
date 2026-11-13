@@ -18,6 +18,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Textarea } from "@/components/ui/textarea";
 import type { StoryContent } from "@/lib/stories";
+import type { CharacterOption } from "@/server/queries/production";
 import { generateStory, saveStoryEdits } from "@/server/actions/stories";
 
 type Props = {
@@ -27,12 +28,14 @@ type Props = {
   targetDurationSeconds: number;
   /** The model that writes stories (OpenAI). */
   writer: { configured: boolean; model: string };
+  /** Library characters; their looks can be picked per scene. */
+  library: CharacterOption[];
 };
 
 const NETWORK_ERROR =
   "Lost contact with the server. If a revision appears in the history, the request still finished.";
 
-export function StoryWorkspace({ storyId, content, latestRevision, targetDurationSeconds, writer }: Props) {
+export function StoryWorkspace({ storyId, content, latestRevision, targetDurationSeconds, writer, library }: Props) {
   const [draft, setDraft] = useState(content);
   const [version, setVersion] = useState(0);
   // Reset the editor whenever the server has a new revision; adjusting state during render
@@ -182,6 +185,7 @@ export function StoryWorkspace({ storyId, content, latestRevision, targetDuratio
             onChange={setDraft}
             version={version}
             targetDurationSeconds={targetDurationSeconds}
+            library={library}
             disabled={busy}
           />
 

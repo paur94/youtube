@@ -4,9 +4,11 @@ import {
   CircleAlertIcon,
   CircleCheckIcon,
   CopyIcon,
+  LibraryIcon,
   PlusIcon,
   Trash2Icon,
 } from "lucide-react";
+import Link from "next/link";
 import { useId, useState } from "react";
 import { toast } from "sonner";
 
@@ -14,6 +16,7 @@ import { Field } from "@/components/form-fields";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import {
   formatDialogue,
@@ -22,11 +25,13 @@ import {
   parseList,
   REVIEW_CHECK_LABELS,
   REVIEW_CHECKS,
+  sceneLookOf,
   sumSceneDurations,
   type StoryContent,
   type StoryScene,
 } from "@/lib/stories";
 import { cn } from "@/lib/utils";
+import type { CharacterOption } from "@/server/queries/production";
 
 type Props = {
   value: StoryContent;
@@ -34,11 +39,20 @@ type Props = {
   /** Bumped whenever `value` is replaced from the server, to reset blur-committed fields. */
   version: number;
   targetDurationSeconds: number;
+  /** Library characters: their descriptions live in the library, and scenes pick one of their looks. */
+  library: CharacterOption[];
   disabled?: boolean;
 };
 
-export function StoryEditor({ value, onChange, version, targetDurationSeconds, disabled }: Props) {
+// Radix Select needs a non-empty value for the "no look picked" option; look labels can't be empty.
+const DEFAULT_LOOK = "";
+const DEFAULT_LOOK_VALUE = "__default__";
+
+const nameKey = (name: string) => name.trim().toLowerCase().replace(/\s+/g, " ");
+
+export function StoryEditor({ value, onChange, version, targetDurationSeconds, library, disabled }: Props) {
   const id = useId();
+  const libraryByName = new Map(library.map((c) => [nameKey(c.name), c]));
   // Scene cards have blur-committed fields, so they remount when scenes shift position.
   const [layoutKey, setLayoutKey] = useState(0);
   const set = <K extends keyof StoryContent>(key: K, v: StoryContent[K]) => onChange({ ...value, [key]: v });
@@ -76,6 +90,7 @@ export function StoryEditor({ value, onChange, version, targetDurationSeconds, d
         productionNotes: "",
         soundEffects: [],
         musicMood: last?.musicMood ?? "",
+        looks: [],
       },
     ]);
   }
@@ -152,10 +167,15 @@ export function StoryEditor({ value, onChange, version, targetDurationSeconds, d
       <Card>
         <CardHeader>
           <CardTitle>Characters</CardTitle>
-          <CardDescription>The visual description is reused in every scene prompt for consistency.</CardDescription>
+          <CardDescription>
+            The visual description is reused in every scene prompt for consistency. Library characters keep their
+            descriptions in the library; pick their look per scene in the storyboard.
+          </CardDescription>
         </CardHeader>
         <CardContent className="grid gap-3">
-          {value.characters.map((character, i) => (
+          {value.characters.map((character, i) => {
+            const linked = libraryByName.get(nameKey(character.name));
+            return (
             <div key={i} className="grid gap-3 rounded-lg border bg-background/40 p-3">
               <div className="grid gap-3 sm:grid-cols-[1fr_1fr_auto] sm:items-end">
                 <Field id={`${id}-char-${i}-name`} label="Name">
@@ -182,6 +202,17 @@ export function StoryEditor({ value, onChange, version, targetDurationSeconds, d
                   <Trash2Icon />
                 </Button>
               </div>
+              {linked ? (
+                <Link
+                  href={`/characters/${linked.id}`}
+                  className="inline-flex w-fit items-center gap-1.5 text-xs text-muted-foreground hover:text-primary"
+                >
+                  <LibraryIcon className="size-3.5" />
+                  From your character library
+                  {linked.looks.length > 0 && ` · ${linked.looks.length + 1} looks`}
+                </Link>
+              ) : (
+              <>
               <Field id={`${id}-char-${i}-desc`} label="Personality">
                 <Textarea
                   id={`${id}-char-${i}-desc`}
@@ -205,8 +236,11 @@ export function StoryEditor({ value, onChange, version, targetDurationSeconds, d
                   }
                 />
               </Field>
+              </>
+              )}
             </div>
-          ))}
+            );
+          })}
           <Button
             type="button"
             variant="outline"
@@ -251,6 +285,7 @@ export function StoryEditor({ value, onChange, version, targetDurationSeconds, d
             key={`${version}-${layoutKey}-${i}`}
             id={`${id}-scene-${i}`}
             scene={scene}
+            library={libraryByName}
             onChange={(patch) => updateScene(i, patch)}
             onRemove={() => removeScene(i)}
           />
@@ -269,14 +304,26 @@ export function StoryEditor({ value, onChange, version, targetDurationSeconds, d
 function SceneCard({
   id,
   scene,
+  library,
   onChange,
   onRemove,
 }: {
   id: string;
   scene: StoryScene;
+  library: Map<string, CharacterOption>;
   onChange: (patch: Partial<StoryScene>) => void;
   onRemove: () => void;
 }) {
+  const withLooks = scene.characters.flatMap((name) => {
+    const character = library.get(nameKey(name));
+    return character && character.looks.length > 0 ? [{ name, character }] : [];
+  });
+
+  function pickLook(name: string, look: string) {
+    const others = scene.looks.filter((l) => nameKey(l.character) !== nameKey(name));
+    onChange({ looks: look === DEFAULT_LOOK ? others : [...others, { character: name, look }] });
+  }
+
   async function copyPrompt() {
     try {
       await navigator.clipboard.writeText(scene.visualPrompt);
@@ -348,6 +395,39 @@ function SceneCard({
             />
           </Field>
         </div>
+        {withLooks.length > 0 && (
+          <div className="grid gap-1.5">
+            <span className="text-sm font-medium">Looks in this scene</span>
+            <div className="flex flex-wrap gap-2">
+              {withLooks.map(({ name, character }) => {
+                // A label that is no longer in the library falls back to the default look on import.
+                const picked = sceneLookOf(scene, name);
+                const known = picked ? character.looks.find((l) => nameKey(l.label) === nameKey(picked)) : undefined;
+                return (
+                  <div key={name} className="flex items-center gap-1.5 rounded-md border bg-background/40 py-1 pr-1 pl-2">
+                    <span className="text-xs font-medium">{name}</span>
+                    <Select
+                      value={known?.label ?? DEFAULT_LOOK_VALUE}
+                      onValueChange={(v) => pickLook(name, v === DEFAULT_LOOK_VALUE ? DEFAULT_LOOK : v)}
+                    >
+                      <SelectTrigger size="sm" aria-label={`Look for ${name}`} className="h-7 text-xs">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value={DEFAULT_LOOK_VALUE}>Default look</SelectItem>
+                        {character.looks.map((l) => (
+                          <SelectItem key={l.id} value={l.label}>
+                            {l.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
         <Field id={`${id}-music`} label="Music mood">
           <Input id={`${id}-music`} value={scene.musicMood} onChange={(e) => onChange({ musicMood: e.target.value })} />
         </Field>

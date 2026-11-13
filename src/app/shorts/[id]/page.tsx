@@ -128,6 +128,7 @@ async function ShortData({ params }: Pick<PageProps<"/shorts/[id]">, "params">) 
               settings={short.videoSettings}
               captionsText={formatCaptionLines(short.captions)}
               captionsReviewed={short.captionsReviewed}
+              overlays={short.overlays}
               durationSeconds={probe?.durationSeconds ?? null}
               hook={short.hook}
               hookSeconds={short.hookSeconds}

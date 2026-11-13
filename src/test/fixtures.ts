@@ -44,6 +44,7 @@ export const sampleContent: StoryContent = {
       productionNotes: "STEP 1 (keyframe): Pip peeking out of the nest.",
       soundEffects: ["rain", "giggle"],
       musicMood: "Light ukulele",
+      looks: [],
     },
     {
       number: 2,
@@ -58,6 +59,7 @@ export const sampleContent: StoryContent = {
       productionNotes: "",
       soundEffects: ["splash"],
       musicMood: "Bouncy",
+      looks: [],
     },
   ],
   musicMood: "Cheerful and gentle",

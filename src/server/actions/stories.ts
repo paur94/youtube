@@ -16,6 +16,7 @@ import {
 } from "@/lib/stories";
 import { getOpenAIConfig, OPENAI_NOT_CONFIGURED_MESSAGE, runOpenAIStoryGeneration } from "@/server/ai/openai";
 import { buildStoryPrompt } from "@/server/ai/story-prompt";
+import { getCharacterOptions } from "@/server/queries/production";
 import { getStory } from "@/server/queries/stories";
 
 import type { ActionResult } from "./ideas";
@@ -145,8 +146,9 @@ export async function generateStory(id: string, notes = ""): Promise<ActionResul
   if (!apiKey) return { ok: false, message: OPENAI_NOT_CONFIGURED_MESSAGE };
 
   let story: Awaited<ReturnType<typeof getStory>>;
+  let library: Awaited<ReturnType<typeof getCharacterOptions>>;
   try {
-    story = await getStory(storyId.data);
+    [story, library] = await Promise.all([getStory(storyId.data), getCharacterOptions()]);
   } catch (error) {
     console.error("generateStory: load failed", error);
     return { ok: false, message: DB_ERROR };
@@ -154,7 +156,7 @@ export async function generateStory(id: string, notes = ""): Promise<ActionResul
   if (!story) return { ok: false, message: "Story not found" };
 
   const { model, effort } = getOpenAIConfig();
-  const prompt = buildStoryPrompt(story, { previous: story.content, notes: revisionNotes.data });
+  const prompt = buildStoryPrompt(story, { previous: story.content, notes: revisionNotes.data, library });
   const result = await runOpenAIStoryGeneration({ apiKey }, { model, effort, ...prompt });
 
   let revisionNumber: number | null;

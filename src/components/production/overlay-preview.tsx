@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 
-import { OVERLAY_STYLE, overlayLayout, overlayOpacityAt, type SceneOverlay } from "@/lib/overlays";
+import { type Frame, OVERLAY_STYLE, overlayLayout, overlayOpacityAt, type SceneOverlay } from "@/lib/overlays";
 
 /**
  * A clip with its text overlays drawn on top, so their timing can be checked before Final assembly.
@@ -56,46 +56,54 @@ export function OverlayVideo({
   return (
     <div className="relative">
       <video ref={video} src={src} className={className} controls={controls} muted={!controls} preload="metadata" playsInline />
-      {frame && (
-        <svg
-          viewBox={`0 0 ${frame.width} ${frame.height}`}
-          preserveAspectRatio="xMidYMid meet"
-          className="pointer-events-none absolute inset-0 size-full"
-          aria-hidden
-        >
-          {overlays.map((overlay) => {
-            const opacity = overlayOpacityAt(overlay, time);
-            if (!opacity) return null;
-            const l = overlayLayout(overlay, frame);
-            const style = OVERLAY_STYLE[overlay.type];
-            return (
-              <g key={overlay.id} transform={`translate(${l.x} ${l.y})`} opacity={opacity}>
-                <rect width={l.boxWidth} height={l.boxHeight} rx={l.radius} fill={style.fill} fillOpacity={style.alpha} />
-                {l.tailHeight > 0 && (
-                  <polygon
-                    points={`${l.tailFrom},${l.boxHeight - 1} ${l.tailTo},${l.boxHeight - 1} ${l.tailTip},${l.boxHeight + l.tailHeight}`}
-                    fill={style.fill}
-                  />
-                )}
-                {l.lines.map((line, i) => (
-                  <text
-                    key={i}
-                    x={l.boxWidth / 2}
-                    y={l.paddingY + i * l.lineHeight + l.lineHeight / 2}
-                    textAnchor="middle"
-                    dominantBaseline="central"
-                    fontSize={l.fontSize}
-                    fontFamily='"Varela Round", ui-rounded, "Arial Rounded MT Bold", system-ui, sans-serif'
-                    fill={style.text}
-                  >
-                    {line}
-                  </text>
-                ))}
-              </g>
-            );
-          })}
-        </svg>
-      )}
+      {frame && <OverlayLayer overlays={overlays} frame={frame} time={time} />}
     </div>
+  );
+}
+
+/**
+ * The overlays shown at `time`, drawn over a positioned parent whose box is the frame (or contains
+ * it, letterboxed). `frame` is the size the FFmpeg render lays them out in.
+ */
+export function OverlayLayer({ overlays, frame, time }: { overlays: SceneOverlay[]; frame: Frame; time: number }) {
+  return (
+    <svg
+      viewBox={`0 0 ${frame.width} ${frame.height}`}
+      preserveAspectRatio="xMidYMid meet"
+      className="pointer-events-none absolute inset-0 size-full"
+      aria-hidden
+    >
+      {overlays.map((overlay) => {
+        const opacity = overlayOpacityAt(overlay, time);
+        if (!opacity) return null;
+        const l = overlayLayout(overlay, frame);
+        const style = OVERLAY_STYLE[overlay.type];
+        return (
+          <g key={overlay.id} transform={`translate(${l.x} ${l.y})`} opacity={opacity}>
+            <rect width={l.boxWidth} height={l.boxHeight} rx={l.radius} fill={style.fill} fillOpacity={style.alpha} />
+            {l.tailHeight > 0 && (
+              <polygon
+                points={`${l.tailFrom},${l.boxHeight - 1} ${l.tailTo},${l.boxHeight - 1} ${l.tailTip},${l.boxHeight + l.tailHeight}`}
+                fill={style.fill}
+              />
+            )}
+            {l.lines.map((line, i) => (
+              <text
+                key={i}
+                x={l.boxWidth / 2}
+                y={l.paddingY + i * l.lineHeight + l.lineHeight / 2}
+                textAnchor="middle"
+                dominantBaseline="central"
+                fontSize={l.fontSize}
+                fontFamily='"Varela Round", ui-rounded, "Arial Rounded MT Bold", system-ui, sans-serif'
+                fill={style.text}
+              >
+                {line}
+              </text>
+            ))}
+          </g>
+        );
+      })}
+    </svg>
   );
 }

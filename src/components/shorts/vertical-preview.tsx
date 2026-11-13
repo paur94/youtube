@@ -3,8 +3,10 @@
 import { PauseIcon, PlayIcon } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
+import { OverlayLayer } from "@/components/production/overlay-preview";
 import { Button } from "@/components/ui/button";
 
+import type { SceneOverlay } from "@/lib/overlays";
 import type { CaptionCue, VideoSettings } from "@/lib/shorts";
 import { CAPTION_FONT_SIZE, computeFraming, HOOK_FONT_SIZE, OUT_H, OUT_W, overlayMargins } from "@/lib/short-video";
 
@@ -12,12 +14,13 @@ const pct = (value: number, of: number) => `${(value / of) * 100}%`;
 
 /**
  * Browser simulation of the 9:16 render using the same framing maths as FFmpeg, so framing,
- * captions and hook can be judged before rendering. It plays the original clip; nothing is written.
+ * captions, hook and scene overlays can be judged before rendering. It plays the original clip; nothing is written.
  */
 export function VerticalPreview({
   src,
   settings,
   captions,
+  overlays,
   hook,
   hookSeconds,
   onDimensions,
@@ -25,6 +28,8 @@ export function VerticalPreview({
   src: string;
   settings: VideoSettings;
   captions: CaptionCue[];
+  /** The scenes' text overlays on the Short's timeline, laid out in the 9:16 frame as the render does. */
+  overlays: SceneOverlay[];
   hook: string;
   hookSeconds: number;
   onDimensions?: (width: number, height: number) => void;
@@ -121,6 +126,8 @@ export function VerticalPreview({
           }
         />
       </div>
+      {/* Below the hook and captions, as in the render. */}
+      {overlays.length > 0 && <OverlayLayer overlays={overlays} frame={{ width: OUT_W, height: OUT_H }} time={time} />}
       {margins && showHook && (
         <p
           className="pointer-events-none absolute inset-x-[7%] text-center leading-tight font-bold text-[#FFE100]"

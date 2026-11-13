@@ -45,6 +45,7 @@ Scene detail (the most important part of your job): every scene is produced with
   VIDEO PROMPT:
   <one paragraph that starts "Continue from the start image in one continuous shot with no cuts," followed by the visual style, then the camera movement, then every beat of the action in the same order with approximate timing ("After about 5 seconds ..."), using "first ... then ..." for sequences. Never skip, reorder or pre-complete a step. Describe turns and looks with the whole body ("turns her whole body around to look back"). Keep anything dangerous at a safe distance and say so. End with "Natural body movement, heads always aligned with bodies, same characters and outfits throughout." and the mood, "family-friendly, no text.">
   WATCH FOR: <one line naming the two or three mistakes a generator is most likely to make in this scene, so the reviewer checks them>
+- looks: only for characters the brief lists with several looks: one entry per such character in the scene, giving the exact look label they wear (character name and label as written in the brief). Leave them out to use the default look, and leave the list empty when nobody switches. The visualPrompt and VIDEO PROMPT then describe the character with that look's description instead of the default one.
 - soundEffects: the specific sounds in beat order (for example "deep rumble", "birds flapping away").
 - musicMood: the overall music direction for the video.
 
@@ -74,10 +75,31 @@ ${REVIEW_CHECKS.map((check) => `  - ${check}: ${REVIEW_CHECK_LABELS[check]}`).jo
 
 Language: write the audience-facing text (title, premise, beginning, middle, ending, narration, scene titles, scene narration and dialogue lines) in the story language from the brief. Write everything production-facing (learningOutcome, character descriptions, setting, action, visualPrompt, productionNotes, soundEffects, musicMood and review notes) in English.`;
 
-export function formatBrief(input: StoryInput) {
+/** A library character with the descriptions a scene can pick from. */
+export type LibraryCharacter = { name: string; visualDescription: string; looks: { label: string; visualDescription: string }[] };
+
+// The brief can list library characters by name only; their looks come from the library so they
+// match what production will use.
+function libraryLooks(briefCharacters: string, library: LibraryCharacter[]) {
+  const lines = briefCharacters.split("\n").map((l) => l.trim().toLowerCase());
+  return library
+    .filter((c) => c.name.trim() && lines.some((l) => l.startsWith(c.name.trim().toLowerCase())))
+    .map((c) =>
+      [
+        `- ${c.name.trim()}: ${c.visualDescription.trim()}`,
+        ...c.looks.map((look) => `  - look "${look.label}": ${look.visualDescription.trim()}`),
+      ].join("\n"),
+    );
+}
+
+export function formatBrief(input: StoryInput, library: LibraryCharacter[] = []) {
   // Production links characters to the library by name, so given names must come back unchanged.
+  const fixed = input.characters.trim() ? libraryLooks(input.characters, library) : [];
   const characters = input.characters.trim()
-    ? `${input.characters.trim()}\n(Use these names exactly as written and keep the given looks.)`
+    ? `${input.characters.trim()}\n(Use these names exactly as written and keep the given looks.)` +
+      (fixed.length
+        ? `\nLooks from the character library (the first description is the default and becomes visualDescription; a scene can switch a character to another look through its looks field):\n${fixed.join("\n")}`
+        : "")
     : "None specified. Invent one to three original characters.";
   const lines = [
     `Working title: ${input.title}`,
@@ -96,9 +118,9 @@ export function formatBrief(input: StoryInput) {
 
 export function buildStoryPrompt(
   input: StoryInput,
-  options: { previous?: StoryContent | null; notes?: string } = {},
+  options: { previous?: StoryContent | null; notes?: string; library?: LibraryCharacter[] } = {},
 ) {
-  const brief = formatBrief(input);
+  const brief = formatBrief(input, options.library);
   const notes = options.notes?.trim();
   const previous = options.previous;
 
