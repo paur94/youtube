@@ -203,6 +203,7 @@ export async function listAssets(filters: AssetFilters) {
       isSelected: sql<boolean>`${productionScenes.selectedAssetId} = ${assets.id}`,
       planId: productionPlans.id,
       planTitle: productionPlans.title,
+      planAspectRatio: productionPlans.aspectRatio,
     })
     .from(assets)
     .innerJoin(productionScenes, eq(assets.sceneId, productionScenes.id))

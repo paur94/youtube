@@ -7,7 +7,7 @@ import { Suspense } from "react";
 import { z } from "zod";
 
 import { PageHeader } from "@/components/page-header";
-import { AssetPreview } from "@/components/production/asset-preview";
+import { AssetPreview, frameClass } from "@/components/production/asset-preview";
 import { PlanStatusBadge, SceneStatusBadge } from "@/components/production/badges";
 import {
   AddSceneButton,
@@ -37,6 +37,7 @@ import { getHiggsfieldConfig } from "@/server/providers/higgsfield";
 import { getReplicateConfig } from "@/server/providers/replicate";
 import { getPlanQcOverview } from "@/server/qc/service";
 import { getPlan } from "@/server/queries/production";
+import { cn } from "@/lib/utils";
 
 export const metadata: Metadata = { title: MODULES.production.label };
 
@@ -157,16 +158,22 @@ async function PlanData({ params }: Pick<PageProps<"/production/[id]">, "params"
                     <span className="w-6 shrink-0 text-center text-sm font-semibold text-muted-foreground tabular-nums">
                       {i + 1}
                     </span>
-                    <div className="hidden w-28 shrink-0 sm:block">
+                    <div className={cn("hidden shrink-0 sm:block", plan.aspectRatio === "9:16" || plan.aspectRatio === "3:4" ? "w-14" : "w-28")}>
                       {scene.selected ? (
                         <AssetPreview
                           kind={scene.selected.kind}
                           filePath={scene.selected.filePath}
                           sourceUrl={scene.selected.sourceUrl}
                           controls={false}
+                          aspectRatio={plan.aspectRatio}
                         />
                       ) : (
-                        <div className="flex aspect-video items-center justify-center rounded-md border border-dashed text-muted-foreground">
+                        <div
+                          className={cn(
+                            "flex items-center justify-center rounded-md border border-dashed text-muted-foreground",
+                            frameClass(plan.aspectRatio),
+                          )}
+                        >
                           <ImageOffIcon className="size-4" />
                         </div>
                       )}

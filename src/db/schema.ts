@@ -35,6 +35,7 @@ import {
   SCENE_STATUSES,
 } from "../lib/production";
 import { type EditSettings, VIDEO_STATUSES, type VideoClip } from "../lib/long-video";
+import type { LabJobStatus, LabReference, LabStory } from "../lib/lab";
 import type { SceneOverlay } from "../lib/overlays";
 import type { AudioLevels, MediaProbe } from "../lib/short-video";
 import type { PlanContinuity, SceneContinuity } from "../lib/story-qc";
@@ -215,7 +216,7 @@ export const productionPlans = pgTable(
     title: text().notNull(),
     visualStyle: text().notNull().default(""),
     status: planStatus().notNull().default("planning"),
-    aspectRatio: text().notNull().default("16:9"),
+    aspectRatio: text().notNull().default("9:16"),
     imageModel: text().notNull(),
     videoModel: text().notNull(),
     // "none" keeps generated clips free of music; "music_mood" asks for the story's music mood.
@@ -599,3 +600,47 @@ export const tiktokPosts = pgTable(
 );
 
 export type TikTokPost = typeof tiktokPosts.$inferSelect;
+
+// Adult Lab (/adult): a standalone test bench, deliberately separate from the kids pipeline tables.
+export const labProjects = pgTable("lab_projects", {
+  id: uuid().primaryKey().defaultRandom(),
+  topic: text().notNull(),
+  aspectRatio: text().notNull().default("9:16"),
+  references: jsonb().$type<LabReference[]>().notNull().default([]),
+  story: jsonb().$type<LabStory | null>(),
+  // Bumped on every story generation so the page editor reloads the new draft.
+  storyVersion: integer().notNull().default(0),
+  approved: boolean().notNull().default(false),
+  createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+});
+
+export const labJobs = pgTable(
+  "lab_jobs",
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    projectId: uuid()
+      .notNull()
+      .references(() => labProjects.id, { onDelete: "cascade" }),
+    sceneId: text().notNull(),
+    kind: assetKind().notNull(),
+    provider: text().notNull(),
+    model: text().notNull(),
+    status: text().$type<LabJobStatus>().notNull(),
+    prompt: text().notNull(),
+    request: jsonb().$type<Record<string, unknown>>(),
+    externalRequestId: text(),
+    estimatedCostUsd: numeric({ precision: 10, scale: 4 }),
+    error: text(),
+    filePath: text(),
+    contentType: text(),
+    sourceUrl: text(),
+    submittedAt: timestamp({ withTimezone: true }),
+    completedAt: timestamp({ withTimezone: true }),
+    createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index().on(t.projectId), index().on(t.status)],
+);
+
+export type LabProject = typeof labProjects.$inferSelect;
+export type LabJob = typeof labJobs.$inferSelect;

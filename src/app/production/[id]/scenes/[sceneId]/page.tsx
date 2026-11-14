@@ -314,6 +314,7 @@ async function SceneData({ params }: Pick<Props, "params">) {
                   isFinal={scene.selectedAssetId === asset.id}
                   canInspect={claude.configured}
                   overlays={overlays}
+                  aspectRatio={plan.aspectRatio}
                 />
               ))}
             </div>

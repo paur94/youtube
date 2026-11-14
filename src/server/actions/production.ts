@@ -112,6 +112,7 @@ export async function createProductionPlan(storyId: string): Promise<ActionResul
           storyId: story.id,
           title: story.content.title.trim() || story.title,
           visualStyle: story.visualStyle,
+          aspectRatio: "9:16",
           imageModel: DEFAULT_IMAGE_MODEL,
           videoModel: DEFAULT_VIDEO_MODEL,
           sourceRevision: revision === null ? null : Number(revision),

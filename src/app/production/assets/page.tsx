@@ -144,7 +144,7 @@ async function AssetsData({ searchParams }: Pick<PageProps<"/production/assets">
               >
                 {row.planTitle} · Scene {row.scenePosition + 1}: {row.sceneTitle}
               </Link>
-              <AssetCard asset={toAssetItem(row.asset, (id) => revisions.get(id))} isFinal={row.isSelected} />
+              <AssetCard asset={toAssetItem(row.asset, (id) => revisions.get(id))} isFinal={row.isSelected} aspectRatio={row.planAspectRatio} />
             </div>
           ))}
         </div>

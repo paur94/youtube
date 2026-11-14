@@ -85,6 +85,7 @@ export function AssetCard({
   showSelect = true,
   canInspect = false,
   overlays,
+  aspectRatio,
 }: {
   asset: AssetItem;
   isFinal: boolean;
@@ -93,6 +94,8 @@ export function AssetCard({
   canInspect?: boolean;
   /** The scene's text overlays, previewed over a clip. */
   overlays?: SceneOverlay[];
+  /** The plan's frame format. */
+  aspectRatio?: string | null;
 }) {
   const [confirmed, setConfirmed] = useState(false);
   const [notes, setNotes] = useState("");
@@ -100,7 +103,7 @@ export function AssetCard({
 
   return (
     <article className="grid content-start gap-2 rounded-lg border bg-background/40 p-2.5">
-      <AssetPreview kind={asset.kind} filePath={asset.filePath} sourceUrl={asset.sourceUrl} overlays={overlays} />
+      <AssetPreview kind={asset.kind} filePath={asset.filePath} sourceUrl={asset.sourceUrl} overlays={overlays} aspectRatio={aspectRatio} />
       <div className="flex flex-wrap items-center gap-1.5">
         <AssetStatusBadge status={asset.status} />
         <ModeBadge mode={asset.source === "manual_import" ? "manual" : "api"} />

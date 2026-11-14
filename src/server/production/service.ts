@@ -584,7 +584,7 @@ ${describeReferenceImages(usable.map((r) => r.names), sceneUrls.length, model.im
 
   const aspectRatio = (ASPECT_RATIOS as readonly string[]).includes(plan.aspectRatio)
     ? (plan.aspectRatio as AspectRatio)
-    : "16:9";
+    : "9:16";
   const body = buildRequestBody(model, {
     prompt,
     negativePrompt,
@@ -697,7 +697,7 @@ export async function submitHedraGeneration(options: HedraSubmitOptions): Promis
   );
   const aspectRatio = (ASPECT_RATIOS as readonly string[]).includes(plan.aspectRatio)
     ? (plan.aspectRatio as AspectRatio)
-    : "16:9";
+    : "9:16";
   const request: HedraJobRequest = {
     input: { prompt, aspect_ratio: aspectRatio, resolution: options.resolution },
     startImage: { filePath: start.filePath, contentType: start.contentType },

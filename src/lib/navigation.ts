@@ -2,6 +2,7 @@ import {
   BarChart3Icon,
   BookOpenIcon,
   ClapperboardIcon,
+  FilmIcon,
   LayoutDashboardIcon,
   LightbulbIcon,
   ListVideoIcon,
@@ -52,6 +53,13 @@ export const MODULES = {
     label: "Production Studio",
     icon: ClapperboardIcon,
     description: "Turn approved stories into scenes, generate assets with Higgsfield and review them",
+    ready: true,
+  },
+  adult: {
+    href: "/adult",
+    label: "Adult Lab",
+    icon: FilmIcon,
+    description: "Test bench for grown-up stories: topic and references in, editable story, Grok images and Kling 4.0 clips on one page",
     ready: true,
   },
   characters: {
@@ -118,7 +126,7 @@ export const NAV_GROUPS: { label: string; items: Module[] }[] = [
   { label: "Overview", items: [MODULES.dashboard] },
   {
     label: "Create",
-    items: [MODULES.ideas, MODULES.stories, MODULES.production, MODULES.characters],
+    items: [MODULES.ideas, MODULES.stories, MODULES.production, MODULES.characters, MODULES.adult],
   },
   { label: "Distribute", items: [MODULES.videos, MODULES.shorts, MODULES.publishing, MODULES.playlists] },
   { label: "Grow", items: [MODULES.analytics, MODULES.advertising] },

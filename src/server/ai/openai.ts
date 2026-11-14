@@ -182,6 +182,8 @@ type StructuredRequest = StoryRequest & {
   name: string;
   refusalHint?: string;
   cutOffHint?: string;
+  /** Images shown to the model before the user text, as data: or https URLs (vision input). */
+  images?: string[];
 };
 
 export type OpenAIOptions = {
@@ -248,7 +250,17 @@ export async function runOpenAIStructuredGeneration<S extends z.ZodType>(
   const body = JSON.stringify({
     model: request.model,
     instructions: request.system,
-    input: request.user,
+    input: request.images?.length
+      ? [
+          {
+            role: "user",
+            content: [
+              ...request.images.map((url) => ({ type: "input_image", image_url: url })),
+              { type: "input_text", text: request.user },
+            ],
+          },
+        ]
+      : request.user,
     max_output_tokens: request.maxOutputTokens,
     reasoning: { effort: request.effort },
     text: {
