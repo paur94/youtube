@@ -7,6 +7,7 @@ import { productionScenes } from "@/db/schema";
 import { HEDRA_RESOLUTIONS } from "@/lib/hedra";
 import { normalizeContentType } from "@/server/media/storage";
 import { submitHedraGeneration } from "@/server/production/service";
+import { sceneVideoGateBlocker } from "@/server/qc/gate";
 import { sceneGenerationBlockers } from "@/server/qc/service";
 import { sameOrigin } from "@/server/same-origin";
 
@@ -51,6 +52,9 @@ export async function POST(request: Request) {
     if (!scene) return json(false, "Scene not found", 404);
     const blockers = await sceneGenerationBlockers(fields.data.sceneId);
     if (blockers.length) return json(false, `Story QC found a critical issue: ${blockers[0].message} Fix or dismiss it first.`);
+    // Any reviewed and approved version with this start image counts; Hedra has no catalog model to review against.
+    const gate = await sceneVideoGateBlocker(fields.data.sceneId, null, fields.data.startAssetId);
+    if (gate) return json(false, gate);
 
     const result = await submitHedraGeneration({
       ...fields.data,

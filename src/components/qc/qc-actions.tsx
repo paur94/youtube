@@ -75,9 +75,10 @@ export function RegenerateFailedButton({ planId, scenes, disabled }: { planId: s
           <AlertDialogHeader>
             <AlertDialogTitle>Regenerate {scenes.length} scene{scenes.length === 1 ? "" : "s"}?</AlertDialogTitle>
             <AlertDialogDescription>
-              Scene{scenes.length === 1 ? "" : "s"} {scenes.join(", ")} failed the vision check. Each prompt gets the continuity
-              corrections, then one new clip per scene is submitted with the plan&apos;s video model. This is charged by the
-              provider. The current final clips stay in place until a replacement passes inspection and your review.
+              Scene{scenes.length === 1 ? "" : "s"} {scenes.join(", ")} failed the vision check. Only scenes whose corrected
+              version passed the pre-generation QC and that you approved on the scene page are resubmitted, with the model and
+              start image you approved; the others are listed with what is missing. This is charged by the provider. The current
+              final clips stay in place until a replacement passes inspection and your review.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

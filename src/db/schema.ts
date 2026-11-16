@@ -36,6 +36,7 @@ import {
 } from "../lib/production";
 import { type EditSettings, VIDEO_STATUSES, type VideoClip } from "../lib/long-video";
 import type { LabJobStatus, LabReference, LabStory } from "../lib/lab";
+import type { LabClipReport, LabQcState } from "../lib/lab-qc";
 import type { SceneOverlay } from "../lib/overlays";
 import type { AudioLevels, MediaProbe } from "../lib/short-video";
 import type { PlanContinuity, SceneContinuity } from "../lib/story-qc";
@@ -611,6 +612,8 @@ export const labProjects = pgTable("lab_projects", {
   // Bumped on every story generation so the page editor reloads the new draft.
   storyVersion: integer().notNull().default(0),
   approved: boolean().notNull().default(false),
+  // Pre-generation QC per scene: AI review, approval of the exact version, dismissed checks.
+  qc: jsonb().$type<LabQcState>().notNull().default({ scenes: {} }),
   createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
 });
@@ -635,6 +638,8 @@ export const labJobs = pgTable(
     filePath: text(),
     contentType: text(),
     sourceUrl: text(),
+    // Post-generation inspection of a finished clip (frames, timestamped issues, suggested prompt).
+    qc: jsonb().$type<LabClipReport | null>(),
     submittedAt: timestamp({ withTimezone: true }),
     completedAt: timestamp({ withTimezone: true }),
     createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),

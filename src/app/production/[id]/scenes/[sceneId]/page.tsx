@@ -30,6 +30,7 @@ import { loadClipMusic } from "@/server/production/service";
 import { getHedraConfig } from "@/server/providers/hedra";
 import { getHiggsfieldConfig } from "@/server/providers/higgsfield";
 import { getReplicateConfig } from "@/server/providers/replicate";
+import { loadKidsGate } from "@/server/qc/gate";
 import { generationBlockers, getReferenceCandidates, loadSceneQc } from "@/server/qc/service";
 import { getCharacterOptions, getScene } from "@/server/queries/production";
 
@@ -81,8 +82,8 @@ async function SceneData({ params }: Pick<Props, "params">) {
   await connection();
   const { id, sceneId } = await params;
   if (!z.uuid().safeParse(id).success || !z.uuid().safeParse(sceneId).success) notFound();
-  const [detail, characterOptions, qc] = await Promise.all([getScene(sceneId), getCharacterOptions(), loadSceneQc(sceneId)]);
-  if (!detail || detail.plan.id !== id || !qc) notFound();
+  const [detail, characterOptions, qc, gate] = await Promise.all([getScene(sceneId), getCharacterOptions(), loadSceneQc(sceneId), loadKidsGate(sceneId)]);
+  if (!detail || detail.plan.id !== id || !qc || !gate) notFound();
   const referenceCandidates = await getReferenceCandidates({
     planId: id,
     sceneId,
@@ -255,6 +256,8 @@ async function SceneData({ params }: Pick<Props, "params">) {
                 concerns={concerns}
                 startImages={startImages}
                 openManualJobs={openManualJobs}
+                gate={gate.ctx}
+                aiConfigured={claude.configured}
               />
             </CardContent>
           </Card>

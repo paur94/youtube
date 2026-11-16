@@ -2,7 +2,8 @@ import { z } from "zod";
 
 // Adult Lab: a single-page test bench for stories aimed at grown-up audiences. Topic and reference images go
 // in, GPT (OpenAI) writes an editable story split into clips, and each clip gets a Grok Image 2.0 keyframe and a
-// Kling 4.0 clip. It skips the kids pipeline (QC, characters, production plans) on purpose.
+// Kling 4.0 clip. It skips the kids pipeline (story QC, characters, production plans) on purpose, but every clip
+// still passes its own pre-generation QC and approval (./lab-qc) before it is paid for.
 
 export const LAB_IMAGE_MODEL = "grok-image-2";
 /** Kling 4.0 variants on Replicate: start frame, reference images, or prompt only. */

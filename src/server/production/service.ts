@@ -483,6 +483,30 @@ function startImageProblem(start: Asset | undefined, scene: Pick<ProductionScene
   return start.status === "approved" ? null : "The start image must be approved";
 }
 
+/**
+ * The clip prompt a video model gets for a scene, before keyframe and reference-image notes are appended.
+ * The visual prompt describes the keyframe; a clip is driven by the action and dialogue (no voice-over).
+ * Shared with the pre-generation review, so it checks exactly what will be sent.
+ */
+export async function buildSceneClipPrompt(
+  loaded: NonNullable<Awaited<ReturnType<typeof loadSceneForGeneration>>>,
+  model: HiggsfieldModel,
+) {
+  const { scene, plan } = loaded;
+  return buildVideoPrompt({
+    visualPrompt: scene.visualPrompt,
+    action: scene.action,
+    setting: scene.setting,
+    dialogue: scene.dialogue,
+    characters: loaded.characters,
+    visualStyle: plan.visualStyle,
+    durationSeconds: modelDuration(model, scene.durationSeconds) ?? scene.durationSeconds,
+    startImage: model.input === "image",
+    voiced: generatesAudio(model),
+    music: await loadClipMusic(plan, scene),
+  });
+}
+
 /** Submits an automated generation for a scene to the model's provider (Higgsfield or Replicate). */
 export async function submitApiGeneration(options: SubmitOptions): Promise<ServiceResult> {
   const model = getHiggsfieldModel(options.modelId);
@@ -498,20 +522,8 @@ export async function submitApiGeneration(options: SubmitOptions): Promise<Servi
 
   let negativePrompt = scene.negativePrompt;
   if (model.output === "video") {
-    // The visual prompt describes the keyframe; a clip is driven by the action and dialogue (no voice-over).
     const voiced = generatesAudio(model);
-    prompt = buildVideoPrompt({
-      visualPrompt: scene.visualPrompt,
-      action: scene.action,
-      setting: scene.setting,
-      dialogue: scene.dialogue,
-      characters: loaded.characters,
-      visualStyle: plan.visualStyle,
-      durationSeconds: modelDuration(model, scene.durationSeconds) ?? scene.durationSeconds,
-      startImage: model.input === "image",
-      voiced,
-      music: await loadClipMusic(plan, scene),
-    });
+    prompt = await buildSceneClipPrompt(loaded, model);
     negativePrompt = [negativePrompt.trim(), VIDEO_NEGATIVE_PROMPT, voiced ? DIALOGUE_NEGATIVE_PROMPT : ""]
       .filter(Boolean)
       .join(", ");

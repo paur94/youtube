@@ -38,6 +38,7 @@ import {
   type LabStory,
   newSceneId,
 } from "@/lib/lab";
+import { buildLabGateInput, evaluateLabGate, labStoryChecks } from "@/lib/lab-qc";
 import { mediaUrl } from "@/lib/production";
 import { cn } from "@/lib/utils";
 import type { ActionResult } from "@/server/actions/ideas";
@@ -55,6 +56,8 @@ import {
   setLabApproved,
   updateLabSettings,
 } from "@/server/actions/lab";
+
+import { LabClipInspection, LabGatePanel } from "./lab-gate-panel";
 
 type ProjectSummary = { id: string; topic: string; createdAt: Date };
 
@@ -96,7 +99,18 @@ async function postUpload(form: FormData): Promise<ActionResult & { id?: string 
   return response.json().catch(() => ({ ok: false, message: `Upload failed (HTTP ${response.status})` }));
 }
 
-export function AdultLab({ projects, project, jobs }: { projects: ProjectSummary[]; project: LabProject | null; jobs: LabJob[] }) {
+export function AdultLab({
+  projects,
+  project,
+  jobs,
+  aiConfigured,
+}: {
+  projects: ProjectSummary[];
+  project: LabProject | null;
+  jobs: LabJob[];
+  /** OpenAI is configured, so the pre-generation AI review and clip inspection are required. */
+  aiConfigured: boolean;
+}) {
   const router = useRouter();
   const steps = useSteps();
 
@@ -159,7 +173,14 @@ export function AdultLab({ projects, project, jobs }: { projects: ProjectSummary
         <>
           <SetupCard key={project.id} project={project} steps={steps} />
           {project.story ? (
-            <StoryEditor key={`${project.id}:${project.storyVersion}`} project={project} story={project.story} jobs={jobs} steps={steps} />
+            <StoryEditor
+              key={`${project.id}:${project.storyVersion}`}
+              project={project}
+              story={project.story}
+              jobs={jobs}
+              steps={steps}
+              aiConfigured={aiConfigured}
+            />
           ) : (
             <Card>
               <CardContent className="py-10 text-center text-sm text-muted-foreground">
@@ -379,7 +400,19 @@ function Thumbs({ items }: { items: { key: string; src: string; name: string }[]
   );
 }
 
-function StoryEditor({ project, story: saved, jobs, steps }: { project: LabProject; story: LabStory; jobs: LabJob[]; steps: Steps }) {
+function StoryEditor({
+  project,
+  story: saved,
+  jobs,
+  steps,
+  aiConfigured,
+}: {
+  project: LabProject;
+  story: LabStory;
+  jobs: LabJob[];
+  steps: Steps;
+  aiConfigured: boolean;
+}) {
   const [story, setStory] = useState(saved);
   const dirty = JSON.stringify(story) !== JSON.stringify(saved);
   const save = () => (dirty ? saveLabStory(project.id, story) : Promise.resolve(null));
@@ -395,6 +428,7 @@ function StoryEditor({ project, story: saved, jobs, steps }: { project: LabProje
     });
 
   const totalSeconds = story.scenes.reduce((sum, s) => sum + s.durationSeconds, 0);
+  const storyWarnings = labStoryChecks(project.topic, story).filter((c) => c.status !== "passed");
 
   return (
     <div className="grid gap-4">
@@ -411,6 +445,15 @@ function StoryEditor({ project, story: saved, jobs, steps }: { project: LabProje
         </CardHeader>
         <CardContent className="grid gap-4">
           <FormatSelect project={project} steps={steps} id="lab-format-story" />
+          {storyWarnings.length > 0 && (
+            <ul className="grid gap-1 text-xs text-amber-300">
+              {storyWarnings.map((c) => (
+                <li key={c.id}>
+                  {c.label}: {c.detail} {c.fix}
+                </li>
+              ))}
+            </ul>
+          )}
           <div className="grid gap-1.5">
             <Label htmlFor="lab-title">Title</Label>
             <Input id="lab-title" value={story.title} onChange={(e) => setStory({ ...story, title: e.target.value })} />
@@ -474,8 +517,11 @@ function StoryEditor({ project, story: saved, jobs, steps }: { project: LabProje
           index={index}
           count={story.scenes.length}
           scene={scene}
+          story={story}
           project={project}
           jobs={jobs.filter((j) => j.sceneId === scene.id)}
+          allJobs={jobs}
+          aiConfigured={aiConfigured}
           steps={steps}
           onChange={(patch) => setScene(scene.id, patch)}
           onMove={(delta) => moveScene(index, delta)}
@@ -529,8 +575,11 @@ function SceneCard({
   index,
   count,
   scene,
+  story,
   project,
   jobs,
+  allJobs,
+  aiConfigured,
   steps,
   onChange,
   onMove,
@@ -542,8 +591,12 @@ function SceneCard({
   index: number;
   count: number;
   scene: LabScene;
+  /** The editor's current story: QC rules are evaluated on it while typing. */
+  story: LabStory;
   project: LabProject;
   jobs: LabJob[];
+  allJobs: LabJob[];
+  aiConfigured: boolean;
   steps: Steps;
   onChange: (patch: Partial<LabScene>) => void;
   onMove: (delta: number) => void;
@@ -556,6 +609,17 @@ function SceneCard({
   const field = `scene-${scene.id}`;
   const images = jobs.filter((j) => j.kind === "image");
   const videos = jobs.filter((j) => j.kind === "video");
+  const gateInput = buildLabGateInput({
+    story,
+    sceneId: scene.id,
+    references: project.references,
+    aspectRatio: project.aspectRatio,
+    qc: project.qc,
+    jobs: allJobs,
+    aiConfigured,
+  });
+  const gate = gateInput ? evaluateLabGate(gateInput) : null;
+  const clipBlocked = blocked || !gate?.canGenerate;
 
   return (
     <Card>
@@ -612,8 +676,8 @@ function SceneCard({
               {steps.label === `image:${scene.id}` ? <Loader2Icon className="animate-spin" /> : <ImageIcon />} Generate image
             </Button>
             <Button
-              disabled={blocked || steps.pending}
-              title={blocked ? "Approve the story first" : undefined}
+              disabled={clipBlocked || steps.pending}
+              title={blocked ? "Approve the story first" : clipBlocked ? "Pass the pre-generation QC and approve this version first" : undefined}
               onClick={() => steps.run(`video:${scene.id}`, save, () => generateLabVideo(project.id, scene.id))}
             >
               {steps.label === `video:${scene.id}` ? <Loader2Icon className="animate-spin" /> : <VideoIcon />} Generate clip
@@ -627,6 +691,20 @@ function SceneCard({
                 ? "No start frame picked: the clip uses your reference images. Pick an image below to start from it."
                 : "No start frame picked: the clip is generated from the prompt alone."}
           </p>
+
+          {gate && (
+            <LabGatePanel
+              projectId={project.id}
+              sceneId={scene.id}
+              evaluation={gate}
+              clipSeconds={scene.durationSeconds}
+              aiConfigured={aiConfigured}
+              storyApproved={project.approved}
+              steps={steps}
+              save={save}
+              onApplyPrompt={(videoPrompt) => onChange({ videoPrompt })}
+            />
+          )}
 
           {images.length > 0 && (
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -652,19 +730,30 @@ function SceneCard({
           {videos.length > 0 && (
             <div className="grid gap-2 sm:grid-cols-2">
               {videos.map((job) => (
-                <JobTile key={job.id} job={job} steps={steps}>
-                  {onLastFrameToNext && job.filePath && job.status === "completed" && (
-                    <Button
-                      size="xs"
-                      variant="secondary"
-                      disabled={steps.pending}
-                      title="Use this clip's last frame as the next scene's start frame"
-                      onClick={() => onLastFrameToNext(job.id)}
-                    >
-                      {steps.label === `last-frame:${job.id}` ? <Loader2Icon className="animate-spin" /> : <ChevronsRightIcon />} Last frame → next
-                    </Button>
+                <div key={job.id} className="grid content-start gap-1.5">
+                  <JobTile job={job} steps={steps}>
+                    {onLastFrameToNext && job.filePath && job.status === "completed" && (
+                      <Button
+                        size="xs"
+                        variant="secondary"
+                        disabled={steps.pending}
+                        title="Use this clip's last frame as the next scene's start frame"
+                        onClick={() => onLastFrameToNext(job.id)}
+                      >
+                        {steps.label === `last-frame:${job.id}` ? <Loader2Icon className="animate-spin" /> : <ChevronsRightIcon />} Last frame → next
+                      </Button>
+                    )}
+                  </JobTile>
+                  {job.status === "completed" && job.filePath && gateInput && (
+                    <LabClipInspection
+                      job={job}
+                      contentKey={gateInput.contentKey}
+                      aiConfigured={aiConfigured}
+                      steps={steps}
+                      onApplyPrompt={(videoPrompt) => onChange({ videoPrompt })}
+                    />
                   )}
-                </JobTile>
+                </div>
               ))}
             </div>
           )}
@@ -706,7 +795,7 @@ function JobTile({
         style={ratio ? { aspectRatio: ratio } : undefined}
       >
         {src && job.kind === "video" ? (
-          <video src={src} controls preload="metadata" className="size-full object-contain" />
+          <video id={`lab-video-${job.id}`} src={src} controls preload="metadata" className="size-full object-contain" />
         ) : src ? (
           <a href={src} target="_blank" rel="noreferrer" className="size-full">
             {/* eslint-disable-next-line @next/next/no-img-element */}

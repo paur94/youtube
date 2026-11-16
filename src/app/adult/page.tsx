@@ -9,6 +9,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { db } from "@/db";
 import { labJobs, labProjects } from "@/db/schema";
 import { MODULES } from "@/lib/navigation";
+import { getOpenAIConfig } from "@/server/ai/openai";
 
 export const metadata: Metadata = { title: MODULES.adult.label };
 
@@ -39,5 +40,5 @@ async function LabData({ searchParams }: Pick<PageProps<"/adult">, "searchParams
     ? await db.select().from(labJobs).where(eq(labJobs.projectId, project.id)).orderBy(desc(labJobs.createdAt))
     : [];
 
-  return <AdultLab projects={projects} project={project ?? null} jobs={jobs} />;
+  return <AdultLab projects={projects} project={project ?? null} jobs={jobs} aiConfigured={getOpenAIConfig().configured} />;
 }

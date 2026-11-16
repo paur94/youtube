@@ -28,6 +28,7 @@ import {
 } from "@/lib/lab";
 import { estimateReplicateCost, REPLICATE_PROVIDER, replicateToRemoteStatus } from "@/lib/replicate";
 import { buildLabStoryPrompt } from "@/server/ai/lab-prompt";
+import { labVideoGateBlocker, runLabClipInspection, runLabSceneReview, setLabCheckDismissed, setLabSceneApproval } from "@/server/lab/qc";
 import { getOpenAIConfig, OPENAI_NOT_CONFIGURED_MESSAGE, runOpenAIStructuredGeneration } from "@/server/ai/openai";
 import { extractLastFrame, FfmpegError } from "@/server/media/ffmpeg";
 import { downloadMedia, MediaError, resolveMediaPath, saveMedia } from "@/server/media/storage";
@@ -350,6 +351,14 @@ export async function generateLabVideo(projectId: string, sceneId: string): Prom
   const prepared = await prepareScene(projectId, sceneId);
   if ("error" in prepared) return { ok: false, message: prepared.error };
   if (!prepared.scene.videoPrompt.trim()) return { ok: false, message: "Add a video prompt to the scene first" };
+  // Only the exact version a person approved after the pre-generation QC is paid for.
+  try {
+    const projectJobs = await db.select().from(labJobs).where(eq(labJobs.projectId, projectId));
+    const blocker = labVideoGateBlocker(prepared.project, projectJobs, sceneId);
+    if (blocker) return { ok: false, message: blocker };
+  } catch {
+    return { ok: false, message: DB_ERROR };
+  }
 
   let start: LabJob | undefined;
   if (prepared.scene.startImageJobId) {
@@ -588,4 +597,60 @@ export async function labLastFrameToNextScene(jobId: string): Promise<ActionResu
   }
   revalidate();
   return { ok: true, message: `Saved as scene ${index + 2}'s start frame`, id, sceneId: next.id };
+}
+
+// ---------- Pre-generation QC and clip inspection ----------
+
+const sceneIdSchema = z.string().min(1).max(64);
+
+/** One OpenAI vision call over the start frame or references, the cast and the exact Kling prompt. */
+export async function reviewLabScene(projectId: string, sceneId: string): Promise<ActionResult> {
+  if (!idSchema.safeParse(projectId).success || !sceneIdSchema.safeParse(sceneId).success) return { ok: false, message: "Not found" };
+  try {
+    const result = await runLabSceneReview(projectId, sceneId);
+    revalidate();
+    return result;
+  } catch (error) {
+    console.error("reviewLabScene failed", error);
+    return { ok: false, message: DB_ERROR };
+  }
+}
+
+/** A person approves (or withdraws) the scene's current version; clip generation stays locked without it. */
+export async function approveLabScene(projectId: string, sceneId: string, approve: boolean): Promise<ActionResult> {
+  if (!idSchema.safeParse(projectId).success || !sceneIdSchema.safeParse(sceneId).success) return { ok: false, message: "Not found" };
+  try {
+    const result = await setLabSceneApproval(projectId, sceneId, approve === true);
+    revalidate();
+    return result;
+  } catch (error) {
+    console.error("approveLabScene failed", error);
+    return { ok: false, message: DB_ERROR };
+  }
+}
+
+export async function dismissLabCheck(projectId: string, sceneId: string, checkId: string, dismissed: boolean): Promise<ActionResult> {
+  if (!idSchema.safeParse(projectId).success || !sceneIdSchema.safeParse(sceneId).success || !z.string().min(3).max(200).safeParse(checkId).success) {
+    return { ok: false, message: "Not found" };
+  }
+  try {
+    const result = await setLabCheckDismissed(projectId, sceneId, checkId, dismissed === true);
+    revalidate();
+    return result;
+  } catch {
+    return { ok: false, message: DB_ERROR };
+  }
+}
+
+/** Post-generation inspection of a finished clip: timestamped mistakes and a corrected prompt. */
+export async function inspectLabClip(jobId: string): Promise<ActionResult> {
+  if (!idSchema.safeParse(jobId).success) return { ok: false, message: "Not found" };
+  try {
+    const result = await runLabClipInspection(jobId);
+    revalidate();
+    return result;
+  } catch (error) {
+    console.error("inspectLabClip failed", error);
+    return { ok: false, message: DB_ERROR };
+  }
 }

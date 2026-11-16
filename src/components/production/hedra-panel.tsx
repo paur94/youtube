@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { evaluateKidsGate, type KidsGateContext } from "@/lib/generation-qc";
 import { DEFAULT_HEDRA_RESOLUTION, HEDRA_AUDIO_TYPES, HEDRA_MODEL, HEDRA_RESOLUTIONS } from "@/lib/hedra";
 
 const TRIGGER = "w-full min-w-0 *:data-[slot=select-value]:block *:data-[slot=select-value]:truncate";
@@ -20,11 +21,14 @@ export function HedraPanel({
   configured,
   startImages,
   blocked,
+  gate,
 }: {
   sceneId: string;
   configured: boolean;
   startImages: { id: string; label: string }[];
   blocked: boolean;
+  /** Pre-generation QC: a version approved in the clip panel above with the same start image unlocks Hedra. */
+  gate: KidsGateContext;
 }) {
   const [startAssetId, setStartAssetId] = useState(startImages[0]?.id ?? "");
   const [resolution, setResolution] = useState<string>(DEFAULT_HEDRA_RESOLUTION);
@@ -133,7 +137,16 @@ export function HedraPanel({
               />
             </div>
           </div>
-          <Button className="w-fit" disabled={pending || blocked || !startAssetId || !audio} onClick={submit}>
+          {startAssetId && !evaluateKidsGate(gate, null, startAssetId).canGenerate && (
+            <p className="text-xs text-amber-300">
+              Pre-generation QC: review and approve a clip with this start image under &ldquo;Video clip&rdquo; above first.
+            </p>
+          )}
+          <Button
+            className="w-fit"
+            disabled={pending || blocked || !startAssetId || !audio || !evaluateKidsGate(gate, null, startAssetId).canGenerate}
+            onClick={submit}
+          >
             <SparklesIcon />
             {pending ? "Uploading…" : "Generate with Hedra"}
           </Button>

@@ -6,9 +6,9 @@ import { z } from "zod";
 
 import { db } from "@/db";
 import { assets, characters, productionScenes } from "@/db/schema";
-import { getHiggsfieldModel } from "@/lib/higgsfield";
 import { readVisionReport } from "@/lib/story-qc";
 import { submitApiGeneration } from "@/server/production/service";
+import { approvedRequest, runSceneGateReview, setSceneGateApproval } from "@/server/qc/gate";
 import {
   applyPromptCorrections,
   loadPlanQc,
@@ -197,7 +197,10 @@ export async function setSceneReferences(sceneId: string, assetIds: string[]): P
   });
 }
 
-/** Corrects and regenerates only the scenes whose clip failed the vision check. Costs money: user-confirmed. */
+/**
+ * Resubmits the scenes whose clip failed the vision check, each with the version, model and start image a
+ * person approved after the pre-generation QC. Costs money: user-confirmed.
+ */
 export async function regenerateFailedClips(planId: string, confirmed: boolean): Promise<ActionResult> {
   const id = idSchema.safeParse(planId);
   if (!id.success) return { ok: false, message: "Invalid plan id" };
@@ -205,14 +208,40 @@ export async function regenerateFailedClips(planId: string, confirmed: boolean):
   return guarded("regenerateFailedClips", async () => {
     const loaded = await loadPlanQc(id.data);
     if (!loaded) return { ok: false, message: "Plan not found" };
-    const model = getHiggsfieldModel(loaded.plan.videoModel);
-    if (!model) return { ok: false, message: "Choose a supported video model in the production settings" };
-    const result = await regenerateFailedScenes(
-      id.data,
-      (sceneId, modelId, startAssetId) => submitApiGeneration({ sceneId, modelId, startAssetId }),
-      model.input === "image",
+    const result = await regenerateFailedScenes(id.data, approvedRequest, (sceneId, modelId, startAssetId) =>
+      submitApiGeneration({ sceneId, modelId, startAssetId }),
     );
     revalidateQc(id.data);
+    return result;
+  });
+}
+
+const gateSchema = z.object({ modelId: z.string().min(1).max(100), startAssetId: idSchema.nullable() });
+
+/** Pre-generation QC: one Claude call over the frames, references, script and the exact clip prompt. */
+export async function reviewSceneGeneration(sceneId: string, request: { modelId: string; startAssetId: string | null }): Promise<ActionResult> {
+  const id = idSchema.safeParse(sceneId);
+  const parsed = gateSchema.safeParse(request);
+  if (!id.success || !parsed.success) return { ok: false, message: "Invalid review request" };
+  return guarded("reviewSceneGeneration", async () => {
+    const result = await runSceneGateReview(id.data, parsed.data.modelId, parsed.data.startAssetId);
+    revalidateQc(await planOf(id.data), id.data);
+    return result;
+  });
+}
+
+/** A person approves (or withdraws) the exact version for generation. Generation stays locked without it. */
+export async function approveSceneGeneration(
+  sceneId: string,
+  request: { modelId: string; startAssetId: string | null },
+  approve: boolean,
+): Promise<ActionResult> {
+  const id = idSchema.safeParse(sceneId);
+  const parsed = gateSchema.safeParse(request);
+  if (!id.success || !parsed.success) return { ok: false, message: "Invalid approval" };
+  return guarded("approveSceneGeneration", async () => {
+    const result = await setSceneGateApproval(id.data, parsed.data.modelId, parsed.data.startAssetId, approve === true);
+    revalidateQc(await planOf(id.data), id.data);
     return result;
   });
 }

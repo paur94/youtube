@@ -51,6 +51,7 @@ import {
   syncPlanStatus,
   syncSceneStatus,
 } from "@/server/production/service";
+import { sceneVideoGateBlocker } from "@/server/qc/gate";
 import { sceneGenerationBlockers, selectionBlocker, updateSceneContinuity } from "@/server/qc/service";
 
 import type { ActionResult } from "./ideas";
@@ -466,6 +467,11 @@ export async function generateScene(sceneId: string, options: z.input<typeof gen
         ok: false,
         message: `Story QC found ${blockers.length} critical issue${blockers.length === 1 ? "" : "s"}: ${blockers[0].message} Apply the corrections or dismiss the issue first.`,
       };
+    }
+    // Clips are paid per second: only the exact version a person approved after the pre-generation QC goes out.
+    if (getHiggsfieldModel(parsed.data.modelId)?.output === "video") {
+      const gate = await sceneVideoGateBlocker(id.data, parsed.data.modelId, parsed.data.startAssetId ?? null);
+      if (gate) return { ok: false, message: gate };
     }
     result = await submitApiGeneration({ sceneId: id.data, ...parsed.data });
   } catch (error) {

@@ -7,6 +7,8 @@ import { and, asc, desc, eq, inArray, ne } from "drizzle-orm";
 
 import { db } from "@/db";
 import { assets, characters, productionPlans, productionScenes, sceneCharacters, shortGenerations, storyCharacters } from "@/db/schema";
+import { kidsContentKey, readGateState } from "@/lib/generation-qc";
+import { readSceneFrames } from "@/lib/kling";
 import { resolveLook } from "@/lib/production";
 import {
   buildCorrectedPrompt,
@@ -119,8 +121,26 @@ export async function loadSceneQc(sceneId: string) {
   return plan && scene ? { ...plan, current: scene } : null;
 }
 
+/** Hash of everything that shapes the scene's clip; a pre-generation review or approval only counts for it. */
+export function sceneContentKey(s: SceneQc, plan: { visualStyle: string | null }) {
+  const frames = readSceneFrames(s.continuity);
+  return kidsContentKey({
+    visualPrompt: s.scene.visualPrompt,
+    action: s.scene.action,
+    setting: s.scene.setting,
+    dialogue: s.scene.dialogue,
+    durationSeconds: s.scene.durationSeconds,
+    negativePrompt: s.scene.negativePrompt,
+    visualStyle: plan.visualStyle,
+    characters: s.qc.characters,
+    middleAssetIds: frames.middleAssetIds,
+    endAssetId: frames.endAssetId,
+    referenceAssetIds: s.continuity.referenceAssetIds,
+  });
+}
+
 /** Issues that still count: not dismissed and not already written into the prompt as a correction. */
-function settled(continuity: SceneContinuity) {
+export function settled(continuity: SceneContinuity) {
   return [...continuity.dismissed, ...(continuity.corrected ?? [])];
 }
 
@@ -136,7 +156,7 @@ export async function sceneGenerationBlockers(sceneId: string) {
 
 // ---------- Logging ----------
 
-async function logUsage(planId: string, kind: string, result: StructuredResult<unknown>) {
+export async function logUsage(planId: string, kind: string, result: StructuredResult<unknown>) {
   await db.insert(shortGenerations).values({
     planId,
     kind,
@@ -233,12 +253,12 @@ async function labelSceneReferences(ids: string[]) {
 
 // ---------- Stage 2: vision check ----------
 
-function imageBlock(jpeg: Buffer): Anthropic.Beta.BetaImageBlockParam {
+export function imageBlock(jpeg: Buffer): Anthropic.Beta.BetaImageBlockParam {
   return { type: "image", source: { type: "base64", media_type: "image/jpeg", data: jpeg.toString("base64") } };
 }
 
 /** A reference as a small JPEG; without FFmpeg, the original when the API accepts it as is. */
-async function referenceImage(asset: typeof assets.$inferSelect, ffmpeg: boolean): Promise<Anthropic.Beta.BetaImageBlockParam | null> {
+export async function referenceImage(asset: typeof assets.$inferSelect, ffmpeg: boolean): Promise<Anthropic.Beta.BetaImageBlockParam | null> {
   if (!asset.filePath) return null;
   if (ffmpeg) return imageBlock(await downscaleImage(asset.filePath));
   const file = resolveMediaPath(asset.filePath);
@@ -383,7 +403,16 @@ export async function applyPromptCorrections(sceneId: string): Promise<QcResult>
   const failed = latestFailedReport(sceneAssets, s);
   const dismissed = new Set(s.continuity.dismissed);
   const open = [...s.state.issues, ...(failed?.issues ?? [])].filter((i) => !dismissed.has(i.id));
-  const additions = [s.state.preflightCurrent ? (s.continuity.preflight?.promptAdditions ?? "") : "", failed?.promptAdditions ?? ""];
+  // The pre-generation review of the current version adds its open findings and requirements too.
+  const review = readGateState(s.continuity.gate).review;
+  const reviewCurrent = review && review.contentKey === sceneContentKey(s, loaded.plan) ? review : null;
+  const reviewFixes = (reviewCurrent?.checks ?? []).filter((c) => c.status !== "passed" && c.fix && !dismissed.has(c.id)).map((c) => c.fix!);
+  const additions = [
+    s.state.preflightCurrent ? (s.continuity.preflight?.promptAdditions ?? "") : "",
+    failed?.promptAdditions ?? "",
+    reviewCurrent?.promptAdditions ?? "",
+    ...reviewFixes,
+  ];
   const corrected = buildCorrectedPrompt(s.scene.visualPrompt, open, additions);
   if (!corrected || corrected === s.scene.visualPrompt) return { ok: true, message: "No corrections needed: the prompt already covers every open issue." };
 
@@ -496,49 +525,33 @@ export async function selectionBlocker(sceneId: string, assetId: string) {
 }
 
 /**
- * Re-generates only the scenes whose clip failed the vision check: corrects each prompt, then submits
- * one new generation per scene with the plan's video model. Originals stay selected until a
+ * Re-generates only the scenes whose clip failed the vision check. Nothing is corrected or approved
+ * automatically: each scene goes out only when its corrected version passed the pre-generation QC and a
+ * person approved it, with the model and start image they approved. Originals stay selected until a
  * replacement passes review.
  */
 export async function regenerateFailedScenes(
   planId: string,
+  approvedRequest: (sceneId: string) => Promise<{ modelId: string; startAssetId: string | null } | { problem: string }>,
   submit: (sceneId: string, modelId: string, startAssetId: string | null) => Promise<QcResult>,
-  requiresStartImage: boolean,
 ): Promise<QcResult> {
   const failed = await scenesNeedingRegeneration(planId);
   if (!failed.length) return { ok: true, message: "No scene has a clip that failed the vision check." };
-  const [plan] = await db.select({ videoModel: productionPlans.videoModel }).from(productionPlans).where(eq(productionPlans.id, planId));
-  if (!plan) return { ok: false, message: "Plan not found" };
 
   const outcomes: string[] = [];
   let submitted = 0;
   for (const s of failed) {
     const label = `Scene ${s.qc.number}`;
-    await applyPromptCorrections(s.scene.id);
-    const blockers = await sceneGenerationBlockers(s.scene.id);
-    if (blockers.length) {
-      outcomes.push(`${label}: ${blockers[0].message}`);
+    const request = await approvedRequest(s.scene.id);
+    if ("problem" in request) {
+      outcomes.push(`${label}: ${request.problem}`);
       continue;
     }
-    let start: string | null = null;
-    if (requiresStartImage) {
-      const [keyframe] = await db
-        .select({ id: assets.id })
-        .from(assets)
-        .where(and(eq(assets.sceneId, s.scene.id), eq(assets.kind, "image"), eq(assets.status, "approved")))
-        .orderBy(desc(assets.revision))
-        .limit(1);
-      if (!keyframe) {
-        outcomes.push(`${label}: the video model needs an approved keyframe image`);
-        continue;
-      }
-      start = keyframe.id;
-    }
-    const result = await submit(s.scene.id, plan.videoModel, start);
+    const result = await submit(s.scene.id, request.modelId, request.startAssetId);
     if (result.ok) submitted++;
     else outcomes.push(`${label}: ${result.message}`);
   }
-  const message = `Corrected and resubmitted ${submitted} of ${failed.length} scene${failed.length === 1 ? "" : "s"}.${outcomes.length ? ` ${outcomes.join(" · ")}` : ""}`;
+  const message = `Resubmitted ${submitted} of ${failed.length} failed scene${failed.length === 1 ? "" : "s"}.${outcomes.length ? ` ${outcomes.join(" · ")}` : ""}`;
   return { ok: submitted > 0, message };
 }
 

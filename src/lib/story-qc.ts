@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import type { GateState } from "./generation-qc";
 import type { SceneFrames } from "./kling";
 import type { CheckStatus } from "./short-qc";
 import type { StoryScene } from "./stories";
@@ -158,6 +159,8 @@ export type SceneContinuity = {
   promptHistory: PromptRevision[];
   /** Middle and end keyframes for Kling 4.0 clips; see readSceneFrames in ./kling. */
   frames?: SceneFrames;
+  /** Pre-generation QC: the AI review and the approval of the exact clip request; see ./generation-qc. */
+  gate?: GateState;
 };
 
 export const EMPTY_SCENE_CONTINUITY: SceneContinuity = { referenceAssetIds: [], preflight: null, dismissed: [], promptHistory: [] };

@@ -20,7 +20,9 @@ import {
   HIGGSFIELD_WEB_URL,
   modelDuration,
 } from "@/lib/higgsfield";
+import { KidsGatePanel } from "@/components/qc/kids-gate-panel";
 import type { ReferenceCandidate } from "@/components/qc/qc-actions";
+import { evaluateKidsGate, kidsGateModel, type KidsGateContext } from "@/lib/generation-qc";
 import { type SceneFrames, supportsKeyframes } from "@/lib/kling";
 import type { AssetKind } from "@/lib/production";
 import { generateScene, startManualJob } from "@/server/actions/production";
@@ -54,6 +56,8 @@ export function GenerationPanel({
   frames,
   frameCandidates,
   openManualJobs,
+  gate,
+  aiConfigured,
 }: {
   sceneId: string;
   durationSeconds: number;
@@ -78,6 +82,10 @@ export function GenerationPanel({
   /** Images that can be keyframes: this story's non-rejected images and approved character references. */
   frameCandidates: ReferenceCandidate[];
   openManualJobs: { id: string; outputKind: AssetKind; label: string }[];
+  /** Pre-generation QC context; evaluated here for the picked model and start image. */
+  gate: KidsGateContext;
+  /** Claude is configured, so the AI frame review is required. */
+  aiConfigured: boolean;
 }) {
   const available = HIGGSFIELD_MODELS.filter((m) => (m.provider === "replicate" ? replicateConfigured : apiConfigured));
   // The plan default may belong to a provider that isn't configured; fall back to the first available model.
@@ -103,6 +111,16 @@ export function GenerationPanel({
   const keyframes = supportsKeyframes(model);
   const framesUnsaved = keyframes && !sameFrames(frameSelection, frames);
   const startRejectedByKling = keyframes && startImage ? !klingAccepts(startImage.contentType) : false;
+  // Every clip goes through the pre-generation QC for this exact model and start image.
+  const gateModel = kind === "video" && model?.output === "video" ? kidsGateModel(model, durationSeconds) : null;
+  const gateEvaluation = gateModel ? evaluateKidsGate(gate, gateModel, needsStart ? startAssetId || null : null) : null;
+  const gateBlockedReason = framesUnsaved
+    ? "Save the keyframes above first, so the review checks the frames that will be sent."
+    : needsStart && !startAssetId
+      ? "Pick a start image first."
+      : startRejectedByKling
+        ? "Pick a JPEG or PNG start image first."
+        : null;
 
   function switchKind(next: AssetKind) {
     setKind(next);
@@ -255,6 +273,17 @@ export function GenerationPanel({
                 </p>
               )}
             </details>
+            {gateModel && gateEvaluation && (
+              <KidsGatePanel
+                sceneId={sceneId}
+                modelId={gateModel.id}
+                startAssetId={needsStart ? startAssetId || null : null}
+                evaluation={gateEvaluation}
+                clipSeconds={gateModel.requestedSeconds ?? durationSeconds}
+                aiConfigured={aiConfigured}
+                blockedReason={gateBlockedReason}
+              />
+            )}
             {blocked && (
               <div className="flex items-start gap-2 text-xs text-rose-300">
                 <TriangleAlertIcon className="mt-0.5 size-3.5 shrink-0" />
@@ -280,7 +309,10 @@ export function GenerationPanel({
             )}
             <Button
               className="w-fit"
-              disabled={pending || blocked || (needsStart && !startAssetId) || framesUnsaved || startRejectedByKling}
+              disabled={
+                pending || blocked || (needsStart && !startAssetId) || framesUnsaved || startRejectedByKling || (gateEvaluation !== null && !gateEvaluation.canGenerate)
+              }
+              title={gateEvaluation && !gateEvaluation.canGenerate ? "Approve this version in the pre-generation QC first" : undefined}
               onClick={() =>
                 run(() =>
                   generateScene(sceneId, {
@@ -304,7 +336,7 @@ export function GenerationPanel({
         )}
       </section>
 
-      <HedraPanel sceneId={sceneId} configured={hedraConfigured} startImages={startImages} blocked={blocked} />
+      <HedraPanel sceneId={sceneId} configured={hedraConfigured} startImages={startImages} blocked={blocked} gate={gate} />
 
       {/* Manual */}
       <section className="grid gap-3 rounded-lg border border-amber-500/30 p-4">
