@@ -130,11 +130,11 @@ export const REVIEW_CHECKS = [
 export type ReviewCheck = (typeof REVIEW_CHECKS)[number];
 
 export const REVIEW_CHECK_LABELS: Record<ReviewCheck, string> = {
-  age_appropriate_language: "Vocabulary and sentence length suit the age range",
-  no_frightening_content: "Nothing frightening, violent or upsetting for this age",
-  no_unsafe_imitable_behavior: "No unsafe behaviour children might copy",
-  positive_messages: "Positive, kind social messages",
-  learning_objective_addressed: "Learning objective is clearly addressed",
+  age_appropriate_language: "Clear for kids and still interesting for adults",
+  no_frightening_content: "Nothing graphic, gory or genuinely frightening; body visuals stay clean and stylised",
+  no_unsafe_imitable_behavior: "No unsafe behaviour children might copy (food, kitchen or otherwise)",
+  positive_messages: "Positive and respectful; no food or body shaming",
+  learning_objective_addressed: "The food-and-body facts are accurate, not overclaimed, and shown visually",
   original_characters: "Characters are original (no existing shows or franchises)",
   original_plot: "Plot is original, not a retelling of a known story",
   no_brands_or_real_people: "No brands, products or real people",

@@ -164,7 +164,7 @@ export function StoryForm({
             id={`${id}-age`}
             name="ageGroup"
             label="Target age range"
-            defaultValue={defaults.ageGroup ?? "3-5"}
+            defaultValue={defaults.ageGroup ?? "family"}
             options={AGE_GROUPS.map((v) => [v, AGE_GROUP_LABELS[v]])}
           />
           <Field

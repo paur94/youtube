@@ -31,7 +31,7 @@ describe("buildShortAnalysisPrompt", () => {
     expect(user).toContain("Clip length: 15 seconds");
     expect(user).toContain("Planned sound effects: paper rustle");
     expect(user).toContain("(this is the last scene)");
-    expect(user).toContain(`Target age: ${AGE_GROUP_LABELS["3-5"]}`);
+    expect(user).toContain(`Target audience: ${AGE_GROUP_LABELS["3-5"]}`);
   });
 
   it("describes a merged Short as one clip of several scenes", () => {
@@ -48,7 +48,7 @@ describe("buildShortAnalysisPrompt", () => {
 
   it("forbids new footage and calls to action", () => {
     expect(SHORT_SYSTEM_PROMPT).toMatch(/Never suggest adding new footage/);
-    expect(SHORT_SYSTEM_PROMPT).toMatch(/no calls to like, subscribe/);
+    expect(SHORT_SYSTEM_PROMPT).toMatch(/no calls to like, subscribe/i);
   });
 });
 

@@ -140,7 +140,7 @@ function IdeaForm({ idea, onDone }: { idea?: Idea; onDone: () => void }) {
           id={`${id}-age`}
           name="ageGroup"
           label="Target age range"
-          defaultValue={idea?.ageGroup ?? "3-5"}
+          defaultValue={idea?.ageGroup ?? "family"}
           options={AGE_GROUPS.map((v) => [v, AGE_GROUP_LABELS[v]])}
         />
         <SelectField

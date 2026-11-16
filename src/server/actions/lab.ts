@@ -29,7 +29,8 @@ import {
 import { estimateReplicateCost, REPLICATE_PROVIDER, replicateToRemoteStatus } from "@/lib/replicate";
 import { buildLabStoryPrompt } from "@/server/ai/lab-prompt";
 import { getOpenAIConfig, OPENAI_NOT_CONFIGURED_MESSAGE, runOpenAIStructuredGeneration } from "@/server/ai/openai";
-import { downloadMedia, MediaError, resolveMediaPath } from "@/server/media/storage";
+import { extractLastFrame, FfmpegError } from "@/server/media/ffmpeg";
+import { downloadMedia, MediaError, resolveMediaPath, saveMedia } from "@/server/media/storage";
 import { getHiggsfieldClient, HiggsfieldError, NOT_CONFIGURED_MESSAGE as HIGGSFIELD_NOT_CONFIGURED } from "@/server/providers/higgsfield";
 import { getReplicateClient, REPLICATE_NOT_CONFIGURED_MESSAGE, ReplicateError } from "@/server/providers/replicate";
 
@@ -524,3 +525,67 @@ export async function deleteLabJob(jobId: string): Promise<ActionResult> {
   return { ok: true, message: "Deleted" };
 }
 
+
+/**
+ * Saves the last frame of a finished scene clip as an image of the next scene, so that scene's clip
+ * can start exactly where this one ends. Returns the new image's job id; the caller picks it as the
+ * next scene's start frame (the story lives in the editor's unsaved state, so it saves it there).
+ */
+export async function labLastFrameToNextScene(jobId: string): Promise<ActionResult & { id?: string; sceneId?: string }> {
+  if (!idSchema.safeParse(jobId).success) return { ok: false, message: "Not found" };
+  let source: LabJob | undefined;
+  let project: LabProject | null = null;
+  try {
+    [source] = await db.select().from(labJobs).where(eq(labJobs.id, jobId));
+    if (source) project = await loadProject(source.projectId);
+  } catch {
+    return { ok: false, message: DB_ERROR };
+  }
+  if (!source || !project?.story) return { ok: false, message: "Not found" };
+  if (source.kind !== "video" || source.status !== "completed" || !source.filePath) {
+    return { ok: false, message: "Only finished clips have a last frame" };
+  }
+  const scenes = project.story.scenes;
+  const index = scenes.findIndex((s) => s.id === source.sceneId);
+  if (index === -1) return { ok: false, message: "The clip's scene is gone from the story" };
+  const next = scenes[index + 1];
+  if (!next) return { ok: false, message: "This is the last scene" };
+
+  let saved: Awaited<ReturnType<typeof saveMedia>>;
+  try {
+    const png = await extractLastFrame(source.filePath);
+    saved = await saveMedia(new Uint8Array(png), "image/png", `lab/${project.id}`);
+  } catch (error) {
+    return {
+      ok: false,
+      message: error instanceof FfmpegError || error instanceof MediaError ? error.message : "Could not read the clip's last frame",
+    };
+  }
+
+  let id: string;
+  try {
+    const now = new Date();
+    const [row] = await db
+      .insert(labJobs)
+      .values({
+        projectId: project.id,
+        sceneId: next.id,
+        kind: "image",
+        provider: "local",
+        model: "last-frame",
+        status: "completed",
+        prompt: `Last frame of scene ${index + 1}`,
+        request: { lastFrameOfJobId: source.id },
+        filePath: saved.filePath,
+        contentType: saved.contentType,
+        submittedAt: now,
+        completedAt: now,
+      })
+      .returning({ id: labJobs.id });
+    id = row.id;
+  } catch {
+    return { ok: false, message: DB_ERROR };
+  }
+  revalidate();
+  return { ok: true, message: `Saved as scene ${index + 2}'s start frame`, id, sceneId: next.id };
+}

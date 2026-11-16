@@ -4,6 +4,7 @@ import {
   ArrowDownIcon,
   ArrowUpIcon,
   CheckIcon,
+  ChevronsRightIcon,
   ImageIcon,
   Loader2Icon,
   PlusIcon,
@@ -46,6 +47,7 @@ import {
   generateLabImage,
   generateLabStory,
   generateLabVideo,
+  labLastFrameToNextScene,
   recheckLabJob,
   refreshLabJobs,
   removeLabReference,
@@ -175,6 +177,44 @@ export function AdultLab({ projects, project, jobs }: { projects: ProjectSummary
 
 type Steps = ReturnType<typeof useSteps>;
 
+/** The project's frame format, saved on change: every Grok image and Kling clip is generated with it. */
+function FormatSelect({ project, steps, id }: { project: LabProject; steps: Steps; id: string }) {
+  // Shows the picked value until the saved project comes back from the server.
+  // Once the saved format changes, the stale pick no longer applies.
+  const [pick, setPick] = useState<{ saved: string; value: string } | null>(null);
+  const value = pick?.saved === project.aspectRatio ? pick.value : project.aspectRatio;
+  const setPicked = (next: string | null) => setPick(next === null ? null : { saved: project.aspectRatio, value: next });
+
+  return (
+    <div className="flex items-center gap-2">
+      <Label htmlFor={id} className="whitespace-nowrap">
+        Format (images and clips)
+      </Label>
+      <select
+        id={id}
+        className={SELECT_CLASS}
+        value={value}
+        disabled={steps.pending}
+        onChange={(e) => {
+          const next = e.target.value;
+          setPicked(next);
+          steps.run("settings", async () => {
+            const result = await updateLabSettings(project.id, { topic: project.topic, aspectRatio: next });
+            if (!result.ok) setPicked(null);
+            return result;
+          });
+        }}
+      >
+        {LAB_ASPECT_RATIOS.map((r) => (
+          <option key={r} value={r}>
+            {r === "9:16" ? "9:16 vertical" : r === "16:9" ? "16:9 horizontal" : "1:1 square"}
+          </option>
+        ))}
+      </select>
+    </div>
+  );
+}
+
 function NewProjectCard({ steps }: { steps: Steps }) {
   const router = useRouter();
   const [topic, setTopic] = useState("");
@@ -246,10 +286,10 @@ function NewProjectCard({ steps }: { steps: Steps }) {
 
 function SetupCard({ project, steps }: { project: LabProject; steps: Steps }) {
   const [topic, setTopic] = useState(project.topic);
-  const [aspectRatio, setAspectRatio] = useState(project.aspectRatio);
   const fileRef = useRef<HTMLInputElement>(null);
   const settingsDirty = topic !== project.topic;
-  const saveSettings = () => (settingsDirty ? updateLabSettings(project.id, { topic, aspectRatio }) : Promise.resolve(null));
+  const saveSettings = () =>
+    settingsDirty ? updateLabSettings(project.id, { topic, aspectRatio: project.aspectRatio }) : Promise.resolve(null);
 
   return (
     <Card>
@@ -260,22 +300,7 @@ function SetupCard({ project, steps }: { project: LabProject; steps: Steps }) {
       <CardContent className="grid gap-4">
         <Textarea aria-label="Topic" rows={3} value={topic} onChange={(e) => setTopic(e.target.value)} />
         <div className="flex flex-wrap items-center gap-2">
-          <select
-            aria-label="Format"
-            className={SELECT_CLASS}
-            value={aspectRatio}
-            disabled={steps.pending}
-            onChange={(e) => {
-              // Saved right away: images and clips are generated with the project's saved format.
-              const next = e.target.value;
-              setAspectRatio(next);
-              steps.run("settings", () => updateLabSettings(project.id, { topic: project.topic, aspectRatio: next }));
-            }}
-          >
-            {LAB_ASPECT_RATIOS.map((r) => (
-              <option key={r}>{r}</option>
-            ))}
-          </select>
+          <FormatSelect project={project} steps={steps} id="lab-format-setup" />
           {settingsDirty && (
             <Button variant="outline" disabled={steps.pending} onClick={() => steps.run("settings", saveSettings)}>
               <SaveIcon /> Save
@@ -385,6 +410,7 @@ function StoryEditor({ project, story: saved, jobs, steps }: { project: LabProje
           </CardDescription>
         </CardHeader>
         <CardContent className="grid gap-4">
+          <FormatSelect project={project} steps={steps} id="lab-format-story" />
           <div className="grid gap-1.5">
             <Label htmlFor="lab-title">Title</Label>
             <Input id="lab-title" value={story.title} onChange={(e) => setStory({ ...story, title: e.target.value })} />
@@ -455,6 +481,22 @@ function StoryEditor({ project, story: saved, jobs, steps }: { project: LabProje
           onMove={(delta) => moveScene(index, delta)}
           onRemove={() => setStory({ ...story, scenes: story.scenes.filter((s) => s.id !== scene.id) })}
           save={save}
+          onLastFrameToNext={
+            index < story.scenes.length - 1
+              ? (jobId) =>
+                  steps.run(`last-frame:${jobId}`, save, async () => {
+                    const result = await labLastFrameToNextScene(jobId);
+                    if (!result.ok || !result.id) return result;
+                    const next = {
+                      ...story,
+                      scenes: story.scenes.map((s) => (s.id === result.sceneId ? { ...s, startImageJobId: result.id! } : s)),
+                    };
+                    setStory(next);
+                    const saved = await saveLabStory(project.id, next);
+                    return saved.ok ? result : saved;
+                  })
+              : undefined
+          }
           saveWith={(patch) => {
             const next = { ...story, scenes: story.scenes.map((s) => (s.id === scene.id ? { ...s, ...patch } : s)) };
             setStory(next);
@@ -495,6 +537,7 @@ function SceneCard({
   onRemove,
   save,
   saveWith,
+  onLastFrameToNext,
 }: {
   index: number;
   count: number;
@@ -507,6 +550,7 @@ function SceneCard({
   onRemove: () => void;
   save: () => Promise<ActionResult | null>;
   saveWith: (patch: Partial<LabScene>) => void;
+  onLastFrameToNext?: (jobId: string) => void;
 }) {
   const blocked = !project.approved;
   const field = `scene-${scene.id}`;
@@ -576,6 +620,7 @@ function SceneCard({
             </Button>
           </div>
           <p className="text-xs text-muted-foreground">
+            Generates at {project.aspectRatio}.{" "}
             {scene.startImageJobId
               ? "The clip starts from the image marked as start frame."
               : project.references.length
@@ -584,11 +629,11 @@ function SceneCard({
           </p>
 
           {images.length > 0 && (
-            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               {images.map((job) => {
                 const isStart = scene.startImageJobId === job.id;
                 return (
-                  <JobTile key={job.id} job={job} steps={steps} highlight={isStart}>
+                  <JobTile key={job.id} job={job} steps={steps} highlight={isStart} aspectRatio={project.aspectRatio}>
                     {job.filePath && (
                       <Button
                         size="xs"
@@ -607,7 +652,19 @@ function SceneCard({
           {videos.length > 0 && (
             <div className="grid gap-2 sm:grid-cols-2">
               {videos.map((job) => (
-                <JobTile key={job.id} job={job} steps={steps} />
+                <JobTile key={job.id} job={job} steps={steps}>
+                  {onLastFrameToNext && job.filePath && job.status === "completed" && (
+                    <Button
+                      size="xs"
+                      variant="secondary"
+                      disabled={steps.pending}
+                      title="Use this clip's last frame as the next scene's start frame"
+                      onClick={() => onLastFrameToNext(job.id)}
+                    >
+                      {steps.label === `last-frame:${job.id}` ? <Loader2Icon className="animate-spin" /> : <ChevronsRightIcon />} Last frame → next
+                    </Button>
+                  )}
+                </JobTile>
               ))}
             </div>
           )}
@@ -626,12 +683,28 @@ const STATUS_LABEL: Record<string, string> = {
   timed_out: "Timed out",
 };
 
-function JobTile({ job, steps, highlight, children }: { job: LabJob; steps: Steps; highlight?: boolean; children?: React.ReactNode }) {
+function JobTile({
+  job,
+  steps,
+  highlight,
+  aspectRatio,
+  children,
+}: {
+  job: LabJob;
+  steps: Steps;
+  highlight?: boolean;
+  aspectRatio?: string;
+  children?: React.ReactNode;
+}) {
   const running = (LAB_ACTIVE_STATUSES as readonly string[]).includes(job.status);
   const src = job.filePath ? mediaUrl(job.filePath) : null;
+  const ratio = aspectRatio?.includes(":") ? aspectRatio.replace(":", " / ") : undefined;
   return (
     <div className={cn("grid gap-1.5 rounded-lg border p-1.5", highlight && "border-primary ring-2 ring-primary/30")}>
-      <div className="flex aspect-video items-center justify-center overflow-hidden rounded-md bg-muted">
+      <div
+        className={cn("flex items-center justify-center overflow-hidden rounded-md bg-muted", !ratio && "aspect-video")}
+        style={ratio ? { aspectRatio: ratio } : undefined}
+      >
         {src && job.kind === "video" ? (
           <video src={src} controls preload="metadata" className="size-full object-contain" />
         ) : src ? (

@@ -9,7 +9,7 @@ export const IDEA_STATUSES = [
   "published",
   "archived",
 ] as const;
-export const AGE_GROUPS = ["0-2", "3-5", "6-8", "9-12"] as const;
+export const AGE_GROUPS = ["0-2", "3-5", "6-8", "9-12", "family"] as const;
 export const VIDEO_FORMATS = ["short", "standard", "long"] as const;
 export const PRIORITIES = ["low", "medium", "high"] as const;
 export const CATEGORIES = [
@@ -44,6 +44,7 @@ export const AGE_GROUP_LABELS: Record<(typeof AGE_GROUPS)[number], string> = {
   "3-5": "Preschool (3–5)",
   "6-8": "Early school (6–8)",
   "9-12": "Older kids (9–12)",
+  family: "Kids & adults (family)",
 };
 
 export const FORMAT_LABELS: Record<(typeof VIDEO_FORMATS)[number], string> = {
