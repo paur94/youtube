@@ -1,6 +1,5 @@
 import "server-only";
 
-import type Anthropic from "@anthropic-ai/sdk";
 import { and, desc, eq, inArray, ne } from "drizzle-orm";
 
 import { db } from "@/db";
@@ -14,21 +13,22 @@ import {
   type KidsGateContext,
   kidsGateModel as toGateModel,
   kidsGateRules,
+  previousReviewLines,
   readGateState,
-  toGateChecks,
+  reviewChecks,
 } from "@/lib/generation-qc";
 import { getHiggsfieldModel } from "@/lib/higgsfield";
 import { describeKlingFrames, readSceneFrames } from "@/lib/kling";
 import { formatDialogue } from "@/lib/stories";
 import { describeShots, formatSeconds, readVisionReport, visionStatus } from "@/lib/story-qc";
-import { getClaudeClient, getClaudeConfig, NOT_CONFIGURED_MESSAGE, runStructuredGeneration } from "@/server/ai/claude";
 import { buildGateReviewText, gateReviewSystemPrompt } from "@/server/ai/gate-prompt";
+import { getOpenAIConfig, OPENAI_NOT_CONFIGURED_MESSAGE, runOpenAIStructuredGeneration } from "@/server/ai/openai";
 import { getFfmpegVersion } from "@/server/media/ffmpeg";
 import { buildSceneClipPrompt, loadSceneForGeneration, pickCharacterReferences } from "@/server/production/service";
 
 import { generationBlockers, loadSceneQc, logUsage, type QcResult, referenceImage, sceneContentKey, updateSceneContinuity } from "./service";
 
-// Pre-generation QC for Kids Studio clips (see @/lib/generation-qc): the gate context, the Claude frame
+// Pre-generation QC for Kids Studio clips (see @/lib/generation-qc): the gate context, the OpenAI frame
 // review, approvals, and the check every video submission runs.
 
 type Asset = typeof assets.$inferSelect;
@@ -101,7 +101,7 @@ export async function loadKidsGate(sceneId: string) {
     previousClip: latestClip
       ? { revision: latestClip.revision, inspection: inspection === "unchecked" || inspection === null ? "none" : inspection }
       : null,
-    aiConfigured: getClaudeConfig().configured,
+    aiConfigured: getOpenAIConfig().configured,
     state: readGateState(s.continuity.gate),
     dismissed: s.continuity.dismissed,
   };
@@ -147,8 +147,8 @@ export async function approvedRequest(sceneId: string): Promise<{ modelId: strin
 const isReviewRule = (label: string) => label.startsWith("AI review");
 
 /**
- * One Claude call that looks at the start, middle and end frames and the references, reads the exact
- * clip prompt and the script, and reports what would go wrong. Refuses (without calling Claude) while a
+ * One OpenAI vision call that looks at the start, middle and end frames and the references, reads the exact
+ * clip prompt and the script, and reports what would go wrong. Refuses (without calling OpenAI) while a
  * hard rule problem would make the request change anyway.
  */
 export async function runSceneGateReview(sceneId: string, modelId: string, startAssetId: string | null): Promise<QcResult> {
@@ -165,8 +165,8 @@ export async function runSceneGateReview(sceneId: string, modelId: string, start
   const hard = kidsGateRules(ctx, gm, start).filter((c) => c.hard && c.status === "critical" && !isReviewRule(c.label));
   if (hard.length) return { ok: false, message: `Fix this first (no review was run, so nothing was charged): ${hard[0].label}. ${hard[0].fix ?? hard[0].detail}` };
 
-  const client = getClaudeClient();
-  if (!client) return { ok: false, message: NOT_CONFIGURED_MESSAGE };
+  const apiKey = process.env.OPENAI_API_KEY?.trim();
+  if (!apiKey) return { ok: false, message: OPENAI_NOT_CONFIGURED_MESSAGE };
   const generation = await loadSceneForGeneration(sceneId);
   if (!generation) return { ok: false, message: "Scene not found" };
 
@@ -195,16 +195,17 @@ export async function runSceneGateReview(sceneId: string, modelId: string, start
   }
 
   const ffmpeg = Boolean(await getFfmpegVersion());
-  const content: Anthropic.Beta.BetaContentBlockParam[] = [];
+  // Images go before the text in attach order, so the legend numbers them.
+  const urls: string[] = [];
   const legend: string[] = [];
   for (const image of images) {
     const block = await referenceImage(image.asset, ffmpeg).catch(() => null);
-    if (!block) {
-      legend.push(`${image.label}: (could not be attached)`);
+    if (!block || block.source.type !== "base64") {
+      legend.push(`(not attached) ${image.label}`);
       continue;
     }
-    legend.push(image.label);
-    content.push({ type: "text", text: image.label }, block);
+    urls.push(`data:${block.source.media_type};base64,${block.source.data}`);
+    legend.push(`Image ${urls.length}: ${image.label}`);
   }
 
   let prompt = await buildSceneClipPrompt(generation, model);
@@ -237,13 +238,22 @@ export async function runSceneGateReview(sceneId: string, modelId: string, start
     prompt,
     ruleFindings: kidsGateRules(ctx, gm, start),
     history,
+    previousReview: previousReviewLines(ctx.state.review, s.scene.action),
   });
-  content.push({ type: "text", text });
 
-  const config = getClaudeConfig();
-  const result = await runStructuredGeneration(
-    client,
-    { system: gateReviewSystemPrompt("kids"), user: text, content, model: config.model, effort: config.effort, maxTokens: 16_000, subject: "pre-generation review" },
+  const config = getOpenAIConfig();
+  const result = await runOpenAIStructuredGeneration(
+    { apiKey },
+    {
+      system: gateReviewSystemPrompt("kids"),
+      user: text,
+      images: urls,
+      model: config.model,
+      effort: config.effort,
+      maxOutputTokens: 16_000,
+      subject: "pre-generation review",
+      name: "pre_generation_review",
+    },
     gateReviewOutputSchema,
   );
   await logUsage(loaded.plan.id, "qc_gate", result);
@@ -257,9 +267,12 @@ export async function runSceneGateReview(sceneId: string, modelId: string, start
     model: result.model,
     frames: result.data.frames,
     beats: result.data.beats,
-    checks: toGateChecks(result.data.checks),
-    promptAdditions: result.data.promptAdditions.trim(),
-    suggestedPrompt: result.data.suggestedPrompt.trim(),
+    checks: reviewChecks(result.data, gm.requestedSeconds ?? ctx.durationSeconds),
+    fit: result.data.fit,
+    reviewedText: s.scene.action,
+    // An over-full scene needs a split, not a rewrite: a trimmed action would only be flagged next round.
+    promptAdditions: result.data.fit.fits ? result.data.promptAdditions.trim() : "",
+    suggestedPrompt: result.data.fit.fits ? result.data.suggestedPrompt.trim() : "",
     summary: result.data.summary.trim(),
   };
   await updateSceneContinuity(sceneId, (c) => {

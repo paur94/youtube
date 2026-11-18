@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { describeKlingFrames } from "./kling";
+
 // Adult Lab: a single-page test bench for stories aimed at grown-up audiences. Topic and reference images go
 // in, GPT (OpenAI) writes an editable story split into clips, and each clip gets a Grok Image 2.0 keyframe and a
 // Kling 4.0 clip. It skips the kids pipeline (story QC, characters, production plans) on purpose, but every clip
@@ -18,6 +20,22 @@ export type LabAspectRatio = (typeof LAB_ASPECT_RATIOS)[number];
 
 export const LAB_MAX_REFERENCES = 8;
 export const LAB_TOPIC_MAX = 4000;
+/**
+ * Room for a full shot spec (setup, roles, timed beats, end state) of a 30s clip. Kling 4.0 itself takes far
+ * more (below), but past this a prompt is padding: precision comes from structure, not length.
+ */
+export const LAB_VIDEO_PROMPT_MAX = 8000;
+/** Kling 4.0's documented prompt limits (Replicate README, November 2026). */
+export const KLING_PROMPT_MAX_CHARS = 26_000;
+export const KLING_PROMPT_MAX_CHARS_NON_ENGLISH = 11_000;
+
+/** The limit that applies to a prompt: the lower one as soon as a real share of it isn't Latin script. */
+export function klingPromptLimit(prompt: string) {
+  const letters = prompt.match(/\p{L}/gu) ?? [];
+  const nonLatin = letters.filter((c) => !/\p{Script=Latin}/u.test(c)).length;
+  return nonLatin > letters.length * 0.1 ? KLING_PROMPT_MAX_CHARS_NON_ENGLISH : KLING_PROMPT_MAX_CHARS;
+}
+
 /** Kling 4.0 takes 3–30 seconds. */
 export const LAB_MIN_SECONDS = 3;
 export const LAB_MAX_SECONDS = 30;
@@ -45,11 +63,13 @@ export const labSceneSchema = z.object({
   id: z.string().min(1).max(64),
   title: z.string().max(200),
   imagePrompt: z.string().max(4000),
-  videoPrompt: z.string().max(4000),
+  videoPrompt: z.string().max(LAB_VIDEO_PROMPT_MAX),
   dialogue: z.string().max(4000),
   durationSeconds: z.number().int().min(LAB_MIN_SECONDS).max(LAB_MAX_SECONDS),
   /** Generated image used as the clip's first frame; null sends the reference images instead. */
   startImageJobId: z.string().nullable(),
+  /** Image the clip must end on (Kling end_image); only sent together with a start frame. */
+  endImageJobId: z.string().nullable().optional(),
 });
 export type LabScene = z.infer<typeof labSceneSchema>;
 
@@ -109,30 +129,48 @@ export function buildLabImagePrompt(story: LabStory, scene: LabScene, referenceC
 
 export type LabVideoMode = keyof typeof LAB_VIDEO_MODELS;
 
+/** True when the scene's end frame will actually be sent: Kling takes it only with a start frame. */
+export function labSendsEndFrame(scene: Pick<LabScene, "startImageJobId" | "endImageJobId">) {
+  return Boolean(scene.startImageJobId && scene.endImageJobId);
+}
+
 /**
  * Prompt for the scene's Kling clip. Only the characters' own spoken lines go in: no narrator or voice-over.
- * Kling numbers attached images @image_1, @image_2, ...
+ * Kling numbers attached images @image_1, @image_2, ... (start, end, then references).
+ *
+ * With a start frame the cast sheet still goes along, briefly: the motion prompt names the characters, and
+ * without it Kling can't tell which figure in the frame is which and gives the action to the wrong one.
  */
+/** The motion prompt plans its own audio: a Sound line, music or effects. */
+const PLANNED_SOUND_RE = /^\s*sound\s*:|\b(?:music|score|soundtrack|sound effects?|sfx)\b/im;
+
 export function buildLabVideoPrompt(story: LabStory, scene: LabScene, mode: LabVideoMode, referenceCount: number) {
   const parts = [scene.videoPrompt.trim()];
-  if (mode === "startImage") parts.push("@image_1 is the first frame; keep the characters, outfits, setting and style identical to it.");
-  if (mode === "references" && referenceCount) {
+  const sheet = characterSheet(story);
+  if (mode === "startImage") {
+    parts.push(
+      labSendsEndFrame(scene)
+        ? `${describeKlingFrames({ middle: 0, end: true })} The clip ends exactly on the last frame's positions and poses.`
+        : "@image_1 is the first frame; keep the characters, outfits, setting and style identical to it.",
+    );
+    if (sheet) parts.push(`Cast, to tell the figures in @image_1 apart (their look is already in the frame; don't change it):\n${sheet}`);
+  }
+  // When the motion prompt already says what each @image_N is for, a generic line here would contradict it.
+  if (mode === "references" && referenceCount && !/@image_\d/i.test(scene.videoPrompt)) {
     const tags = Array.from({ length: referenceCount }, (_, i) => `@image_${i + 1}`);
     parts.push(
-      `${tags.length === 1 ? tags[0] : `${tags.slice(0, -1).join(", ")} and ${tags.at(-1)}`} ${tags.length === 1 ? "is a reference" : "are references"} for the characters, setting and style; keep them consistent.`,
+      `${tags.length === 1 ? tags[0] : `${tags.slice(0, -1).join(", ")} and ${tags.at(-1)}`} ${tags.length === 1 ? "is a reference" : "are references"} for the characters and the style; keep them consistent. The setting is the one described above.`,
     );
   }
-  if (mode !== "startImage") {
-    const sheet = characterSheet(story);
-    if (sheet) parts.push(`Characters:\n${sheet}`);
-  }
+  if (mode !== "startImage" && sheet) parts.push(`Characters:\n${sheet}`);
   const dialogue = scene.dialogue.trim();
   if (dialogue) {
     parts.push(
       `Spoken dialogue, said on screen by the characters with matching lip movement, in this order:\n${dialogue}\nNo narrator and no voice-over: only the characters speak.`,
     );
   } else {
-    parts.push("No dialogue, no narrator and no voice-over; ambient sound only.");
+    // "Ambient sound only" would cancel music or effects the motion prompt asks for.
+    parts.push(PLANNED_SOUND_RE.test(scene.videoPrompt) ? "No dialogue, no narrator and no voice-over." : "No dialogue, no narrator and no voice-over; ambient sound only.");
   }
   return parts.join("\n\n");
 }

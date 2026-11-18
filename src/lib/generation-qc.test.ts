@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   countActions,
   evaluateGate,
+  fitCheck,
   evaluateKidsGate,
   gateBlocker,
   gateCheck,
@@ -10,6 +11,8 @@ import {
   type KidsGateContext,
   type KidsGateModel,
   kidsGateRules,
+  previousReviewLines,
+  reviewChecks,
   timelineChecks,
 } from "./generation-qc";
 
@@ -161,5 +164,43 @@ describe("kidsGateRules", () => {
     // Hedra (no model) accepts any approved version with the same start image.
     expect(evaluateKidsGate(ctx({ state }), null, "img1").canGenerate).toBe(true);
     expect(evaluateKidsGate(ctx({ state }), null, "other").canGenerate).toBe(false);
+  });
+});
+
+describe("fit verdict", () => {
+  const fit = { fits: false, secondsNeeded: 24, detail: "The insertion, rescue and fall overflow." };
+
+  it("turns an over-full action into one critical finding with a structural fix", () => {
+    expect(fitCheck({ ...fit, fits: true }, 15)).toBeNull();
+    expect(fitCheck(undefined, 15)).toBeNull();
+    expect(fitCheck(fit, 15)).toMatchObject({
+      status: "critical",
+      group: "timeline",
+      label: "The action doesn't fit in 15s",
+      fix: "Raise the scene to 24s, split it into 2 scenes, or cut events until it fits 15s.",
+    });
+    expect(fitCheck({ ...fit, secondsNeeded: 70 }, 15)?.fix).toBe("Split it into 5 scenes, or cut events until it fits 15s.");
+  });
+
+  it("puts the fit finding before the reviewer's checks", () => {
+    const checks = reviewChecks({ fit, checks: [{ group: "actions", status: "warning", label: "Coin", detail: "Coin vanishes.", fix: "Keep it." }] }, 15);
+    expect(checks.map((c) => c.label)).toEqual(["The action doesn't fit in 15s", "Coin"]);
+  });
+});
+
+describe("previousReviewLines", () => {
+  it("is null for the first review", () => {
+    expect(previousReviewLines(null, "x")).toBeNull();
+  });
+
+  it("says when the suggestion was applied and lists the open findings", () => {
+    const lines = previousReviewLines(review({ suggestedPrompt: "0-3s: she lifts the cup.", reviewedText: "old" }), " 0-3s: she lifts the cup. ")!;
+    expect(lines[0]).toContain("IS the suggested prompt");
+    expect(lines[1]).toBe("- [critical] (actions) The cup floats: The cup leaves her hand without a cause. Fix given: Keep the cup in her right hand.");
+  });
+
+  it("notes an edit, and a review that found nothing", () => {
+    const lines = previousReviewLines(review({ checks: [], reviewedText: "old" }), "new")!;
+    expect(lines).toEqual(["The prompt was edited since that review.", "(it found no critical issues or warnings)"]);
   });
 });

@@ -69,7 +69,15 @@ export function gateCheck(
 
 // ---------- AI review ----------
 
+/**
+ * Whether the action the prompt asks for fits the clip at all. Reported apart from the checks: an over-full
+ * scene can't be fixed by rewording, so it gets one fixed finding and no suggested prompt (see reviewChecks).
+ */
+const gateFitSchema = z.object({ fits: z.boolean(), secondsNeeded: z.number(), detail: z.string() });
+export type GateFit = z.infer<typeof gateFitSchema>;
+
 export const gateReviewOutputSchema = z.object({
+  fit: gateFitSchema,
   frames: z.array(z.object({ image: z.string(), description: z.string() })),
   beats: z.array(z.object({ startSeconds: z.number(), endSeconds: z.number(), action: z.string() })),
   checks: z.array(
@@ -99,8 +107,14 @@ export type GateReview = {
   frames: GateReviewOutput["frames"];
   beats: GateBeat[];
   checks: GateCheck[];
+  /** Missing on reviews saved before the fit verdict existed. */
+  fit?: GateFit;
+  /** The prompt text this review read (lab: motion prompt; kids: action), to tell whether its suggestion was applied. */
+  reviewedText?: string;
   promptAdditions: string;
   suggestedPrompt: string;
+  /** Lab only: a corrected image prompt, when the start frame can't begin the action. */
+  suggestedImagePrompt?: string;
   summary: string;
 };
 
@@ -118,6 +132,56 @@ export function toGateChecks(items: GateReviewOutput["checks"]): GateCheck[] {
   return items
     .filter((c) => c.label.trim() || c.detail.trim())
     .map((c) => gateCheck("ai", c.group, c.status, c.label.trim() || c.detail.trim(), c.detail.trim(), { fix: c.fix }));
+}
+
+/** Most a clip can be (Kling); beyond it an over-full scene has to be split. */
+const MAX_CLIP_SECONDS = 30;
+
+/** The finding for an action that doesn't fit the clip; null when it fits. */
+export function fitCheck(fit: GateFit | undefined, clipSeconds: number): GateCheck | null {
+  if (!fit || fit.fits) return null;
+  const needed = Math.max(clipSeconds + 1, Math.ceil(fit.secondsNeeded));
+  const scenes = Math.ceil(needed / Math.min(clipSeconds, MAX_CLIP_SECONDS));
+  return gateCheck(
+    "ai",
+    "timeline",
+    "critical",
+    `The action doesn't fit in ${clipSeconds}s`,
+    `${fit.detail.trim()} It needs about ${needed}s. Rewording the prompt can't fix this, so no suggested prompt was written.`.trim(),
+    {
+      fix:
+        needed <= MAX_CLIP_SECONDS
+          ? `Raise the scene to ${needed}s, split it into ${scenes} scenes, or cut events until it fits ${clipSeconds}s.`
+          : `Split it into ${scenes} scenes, or cut events until it fits ${clipSeconds}s.`,
+    },
+  );
+}
+
+/** A review's findings: the fit verdict first (when the action doesn't fit), then the reviewer's checks. */
+export function reviewChecks(output: Pick<GateReviewOutput, "fit" | "checks">, clipSeconds: number): GateCheck[] {
+  const fit = fitCheck(output.fit, clipSeconds);
+  return [...(fit ? [fit] : []), ...toGateChecks(output.checks)];
+}
+
+/**
+ * The last review, as input for the next one, so the reviewer verifies its own earlier findings instead of
+ * starting over and digging deeper each round. Null when there is no earlier review.
+ */
+export function previousReviewLines(review: GateReview | null | undefined, currentText: string): string[] | null {
+  if (!review) return null;
+  const open = review.checks.filter((c) => c.status !== "passed");
+  const applied = Boolean(review.suggestedPrompt.trim()) && review.suggestedPrompt.trim() === currentText.trim();
+  const changed = review.reviewedText !== undefined && review.reviewedText.trim() !== currentText.trim();
+  return [
+    applied
+      ? "The prompt now under review IS the suggested prompt from that review, applied unchanged."
+      : changed
+        ? "The prompt was edited since that review."
+        : "The prompt may or may not have changed since that review.",
+    ...(open.length
+      ? open.map((c) => `- [${c.status}] (${c.group}) ${c.label}: ${c.detail}${c.fix ? ` Fix given: ${c.fix}` : ""}`)
+      : ["(it found no critical issues or warnings)"]),
+  ];
 }
 
 export type GateSelection = {
@@ -494,7 +558,7 @@ export function kidsGateRules(ctx: KidsGateContext, model: KidsGateModel | null,
     );
   }
 
-  out.push(reviewRule(ctx.state, ctx.contentKey, { modelId: model?.id ?? null, startAssetId: needsStart ? startAssetId : null }, ctx.aiConfigured, "Claude"));
+  out.push(reviewRule(ctx.state, ctx.contentKey, { modelId: model?.id ?? null, startAssetId: needsStart ? startAssetId : null }, ctx.aiConfigured, "OpenAI"));
   return out;
 }
 

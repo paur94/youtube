@@ -1,6 +1,6 @@
 "use client";
 
-import { BadgeCheckIcon, Loader2Icon, ScanEyeIcon, ScanSearchIcon, ShieldCheckIcon, Undo2Icon, WandSparklesIcon } from "lucide-react";
+import { BadgeCheckIcon, ImageIcon, Loader2Icon, ScanEyeIcon, ScanSearchIcon, ShieldCheckIcon, Undo2Icon, WandSparklesIcon } from "lucide-react";
 
 import { GateCounts, GateReport } from "@/components/qc/gate-report";
 import { SeverityIcon } from "@/components/qc/qc-issue-list";
@@ -8,10 +8,11 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import type { GateEvaluation } from "@/lib/generation-qc";
 import { GATE_GROUP_LABELS } from "@/lib/generation-qc";
+import { klingPromptLimit } from "@/lib/lab";
 import { type LabClipReport, labClipStatus, readLabClipReport } from "@/lib/lab-qc";
 import { formatSeconds } from "@/lib/story-qc";
 import type { ActionResult } from "@/server/actions/ideas";
-import { approveLabScene, dismissLabCheck, inspectLabClip, reviewLabScene } from "@/server/actions/lab";
+import { acceptLabIssues, approveLabScene, dismissLabCheck, generateLabVideo, inspectLabClip, reviewLabScene } from "@/server/actions/lab";
 
 type Steps = {
   pending: boolean;
@@ -32,7 +33,9 @@ export function LabGatePanel({
   storyApproved,
   steps,
   save,
+  finalPrompt,
   onApplyPrompt,
+  onApplyImagePrompt,
 }: {
   projectId: string;
   sceneId: string;
@@ -44,10 +47,16 @@ export function LabGatePanel({
   save: () => Promise<ActionResult | null>;
   /** Puts a corrected motion prompt into the editor (not saved until the person saves or reviews). */
   onApplyPrompt: (prompt: string) => void;
+  /** The exact text Kling will get for the editor's current version (motion prompt, frame notes, cast, dialogue). */
+  finalPrompt: string;
+  /** Puts a corrected image prompt into the editor, to generate a new start frame from. */
+  onApplyImagePrompt: (prompt: string) => void;
 }) {
   const review = evaluation.review;
   const busy = steps.pending;
   const label = (name: string) => steps.label === `${name}:${sceneId}`;
+  // Only soft critical issues (AI or rule findings a person can judge) can be accepted; hard ones still block.
+  const acceptable = !evaluation.approved && evaluation.critical.length > 0 && evaluation.critical.every((c) => !c.hard);
 
   return (
     <section className="grid gap-3 rounded-lg border border-sky-500/30 p-3">
@@ -67,7 +76,8 @@ export function LabGatePanel({
       </header>
       <p className="text-xs text-muted-foreground">
         The clip can only be generated once this exact version (motion prompt, dialogue, length, start frame, cast and references) has
-        no open critical issues and you approve it. Any edit needs a new review.
+        no open critical issues and you approve it. Any edit needs a new review. If you checked a critical issue and it's fine, mark it OK
+        (or mark them all OK and generate).
       </p>
       <div className="flex flex-wrap gap-2">
         {aiConfigured && (
@@ -87,6 +97,17 @@ export function LabGatePanel({
             <WandSparklesIcon /> Use suggested prompt
           </Button>
         )}
+        {review?.suggestedImagePrompt && (
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={busy}
+            title="The start frame can't begin this action. Replaces the image prompt in the editor; generate a new image, pick it as start frame and review again"
+            onClick={() => onApplyImagePrompt(review.suggestedImagePrompt!)}
+          >
+            <ImageIcon /> Use corrected image prompt
+          </Button>
+        )}
         {evaluation.approved ? (
           <Button size="sm" variant="ghost" disabled={busy} onClick={() => steps.run(`approve:${sceneId}`, () => approveLabScene(projectId, sceneId, false))}>
             <Undo2Icon /> Withdraw approval
@@ -99,6 +120,25 @@ export function LabGatePanel({
             onClick={() => steps.run(`approve:${sceneId}`, save, () => approveLabScene(projectId, sceneId, true))}
           >
             {label("approve") ? <Loader2Icon className="animate-spin" /> : <BadgeCheckIcon />} Approve this version
+          </Button>
+        )}
+        {acceptable && (
+          <Button
+            size="sm"
+            variant="destructive"
+            disabled={busy || !storyApproved}
+            title={
+              !storyApproved
+                ? "Approve the story first"
+                : `I checked the ${evaluation.critical.length} critical issue${evaluation.critical.length === 1 ? "" : "s"} and they are OK: mark them OK, approve this version and generate the clip (paid)`
+            }
+            onClick={() => {
+              const n = evaluation.critical.length;
+              if (!window.confirm(`Mark ${n} critical issue${n === 1 ? "" : "s"} as OK and generate the clip now? This starts a paid Kling run.`)) return;
+              steps.run(`accept:${sceneId}`, save, () => acceptLabIssues(projectId, sceneId), () => generateLabVideo(projectId, sceneId));
+            }}
+          >
+            {label("accept") ? <Loader2Icon className="animate-spin" /> : <BadgeCheckIcon />} Mark issues OK and generate
           </Button>
         )}
       </div>
@@ -116,6 +156,18 @@ export function LabGatePanel({
           <pre className="mt-2 max-h-56 overflow-auto rounded-md border bg-background/60 p-2.5 whitespace-pre-wrap">{review.suggestedPrompt}</pre>
         </details>
       )}
+      {review?.suggestedImagePrompt && (
+        <details className="text-xs">
+          <summary className="cursor-pointer text-amber-300">Corrected image prompt (generate a new start frame first)</summary>
+          <pre className="mt-2 max-h-56 overflow-auto rounded-md border bg-background/60 p-2.5 whitespace-pre-wrap">{review.suggestedImagePrompt}</pre>
+        </details>
+      )}
+      <details className="text-xs">
+        <summary className="cursor-pointer text-muted-foreground">
+          Final prompt sent to Kling ({finalPrompt.length.toLocaleString("en-US")} of {klingPromptLimit(finalPrompt).toLocaleString("en-US")} characters)
+        </summary>
+        <pre className="mt-2 max-h-72 overflow-auto rounded-md border bg-background/60 p-2.5 whitespace-pre-wrap">{finalPrompt}</pre>
+      </details>
     </section>
   );
 }

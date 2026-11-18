@@ -6,13 +6,15 @@ import { eq } from "drizzle-orm";
 
 import { db } from "@/db";
 import { type LabJob, type LabProject, labJobs, labProjects } from "@/db/schema";
-import { gateBlocker, type GateReview, gateReviewOutputSchema, toGateChecks } from "@/lib/generation-qc";
-import { buildLabVideoPrompt, LAB_VIDEO_MODELS } from "@/lib/lab";
+import { gateBlocker, type GateReview, previousReviewLines, reviewChecks } from "@/lib/generation-qc";
+import { LAB_VIDEO_MODELS, labSendsEndFrame } from "@/lib/lab";
 import {
   buildLabGateInput,
   evaluateLabGate,
   type LabClipReport,
   labClipReviewSchema,
+  labFinalPrompt,
+  labGateReviewOutputSchema,
   labGateRules,
   labSceneClips,
   labVideoMode,
@@ -25,7 +27,7 @@ import { parseTimeline } from "@/lib/production";
 import { pickFrameTimes, type ShotSpec } from "@/lib/story-qc";
 import { buildGateReviewText, buildLabClipText, gateReviewSystemPrompt, LAB_CLIP_SYSTEM_PROMPT } from "@/server/ai/gate-prompt";
 import { getOpenAIConfig, OPENAI_NOT_CONFIGURED_MESSAGE, runOpenAIStructuredGeneration } from "@/server/ai/openai";
-import { downscaleImage, extractFrames, FfmpegError, getFfmpegVersion, probeMedia } from "@/server/media/ffmpeg";
+import { downscaleImage, extractFrames, extractLastFrame, FfmpegError, getFfmpegVersion, probeMedia } from "@/server/media/ffmpeg";
 import { resolveMediaPath } from "@/server/media/storage";
 
 // Pre-generation QC and clip inspection for the Adult Lab (see @/lib/lab-qc). Runs on OpenAI like the
@@ -124,6 +126,22 @@ export async function runLabSceneReview(projectId: string, sceneId: string): Pro
       images.push(url);
       legend.push(`Image ${images.length}: START frame (@image_1, the first frame of the clip)${start?.model === "last-frame" ? ", taken from the previous clip's last frame" : ""}`);
     }
+    const end = labSendsEndFrame(scene) ? jobs.find((j) => j.id === scene.endImageJobId) : undefined;
+    const endUrl = end?.filePath ? await imageDataUrl(end.filePath, end.contentType, ffmpeg) : null;
+    if (endUrl) {
+      images.push(endUrl);
+      legend.push(`Image ${images.length}: END frame (@image_2, the last frame of the clip)`);
+    }
+  }
+  // A scene that doesn't start on the previous clip's last frame is still compared with it for continuity.
+  const startsOnLastFrame = jobs.find((j) => j.id === scene.startImageJobId)?.model === "last-frame";
+  const previousClip = input.index > 0 && !startsOnLastFrame ? labSceneClips(jobs, story.scenes[input.index - 1].id).at(-1) : undefined;
+  if (previousClip?.job.filePath && ffmpeg) {
+    const png = await extractLastFrame(previousClip.job.filePath).catch(() => null);
+    if (png) {
+      images.push(`data:image/png;base64,${png.toString("base64")}`);
+      legend.push(`Image ${images.length}: LAST frame of the previous scene's clip (not sent to Kling; this scene must logically continue from it)`);
+    }
   }
   const refs = project.references.slice(0, Math.min(MAX_REFERENCES, model.maxReferenceImages ?? MAX_REFERENCES));
   for (const [i, ref] of refs.entries()) {
@@ -134,8 +152,7 @@ export async function runLabSceneReview(projectId: string, sceneId: string): Pro
       `Image ${images.length}: reference "${ref.name}"${mode === "references" ? ` (sent to Kling as @image_${i + 1})` : " (used for the story and the start frame; not sent with this clip)"}`,
     );
   }
-  const sentRefs = mode === "references" ? Math.min(project.references.length, model.maxReferenceImages ?? 0) : 0;
-  const prompt = buildLabVideoPrompt(story, scene, mode, sentRefs);
+  const prompt = labFinalPrompt(story, scene, project.references.length);
   const previous = input.index > 0 ? story.scenes[input.index - 1] : null;
   const lastClip = labSceneClips(jobs, scene.id).at(-1);
   const lastReport = lastClip?.job.qc as LabClipReport | null | undefined;
@@ -148,18 +165,20 @@ export async function runLabSceneReview(projectId: string, sceneId: string): Pro
     frameLegend: legend,
     sceneLines: [
       `Story: ${story.title}. ${story.logline}`,
-      `Brief: ${project.topic}`,
+      `Brief of the whole story (context; this clip only has to deliver its own motion prompt): ${project.topic}`,
       `Cast: ${story.characters.map((c) => `${c.name}: ${c.look}`).join(" | ") || "(none)"}`,
       `Image prompt (the scene's keyframe): ${scene.imagePrompt || "(none)"}`,
       `Motion prompt: ${scene.videoPrompt || "(none)"}`,
       `Dialogue:\n${scene.dialogue || "(none)"}`,
-      ...(previous ? [`Previous scene: ${previous.title}: ${previous.videoPrompt.slice(0, 600)}`] : []),
+      ...(previous ? [`Previous scene (${previous.durationSeconds}s), which this one follows:
+${previous.videoPrompt.slice(0, 2500)}`] : []),
     ],
     prompt,
     ruleFindings: labGateRules(input),
     history: lastReport?.issues?.length
       ? lastReport.issues.map((i) => `- Clip ${lastClip!.revision}${i.timestamp != null ? ` at ${i.timestamp}s` : ""} [${i.severity}]: ${i.label}. ${i.observed} Fix: ${i.fix}`)
       : [],
+    previousReview: previousReviewLines(input.qc.review, scene.videoPrompt),
   });
 
   const config = getOpenAIConfig();
@@ -175,7 +194,7 @@ export async function runLabSceneReview(projectId: string, sceneId: string): Pro
       subject: "pre-generation review",
       name: "pre_generation_review",
     },
-    gateReviewOutputSchema,
+    labGateReviewOutputSchema,
   );
   if (!result.ok) return { ok: false, message: result.message };
 
@@ -187,9 +206,13 @@ export async function runLabSceneReview(projectId: string, sceneId: string): Pro
     model: result.model,
     frames: result.data.frames,
     beats: result.data.beats,
-    checks: toGateChecks(result.data.checks),
-    promptAdditions: result.data.promptAdditions.trim(),
-    suggestedPrompt: result.data.suggestedPrompt.trim(),
+    checks: reviewChecks(result.data, scene.durationSeconds),
+    fit: result.data.fit,
+    reviewedText: scene.videoPrompt,
+    // An over-full scene needs a split, not a rewrite: a trimmed prompt would only be flagged next round.
+    promptAdditions: result.data.fit.fits ? result.data.promptAdditions.trim() : "",
+    suggestedPrompt: result.data.fit.fits ? result.data.suggestedPrompt.trim() : "",
+    suggestedImagePrompt: result.data.suggestedImagePrompt.trim(),
     summary: result.data.summary.trim(),
   };
   await updateSceneQc(projectId, sceneId, (qc) => ({
@@ -220,6 +243,27 @@ export async function setLabSceneApproval(projectId: string, sceneId: string, ap
   const approval = { contentKey: gate.input.contentKey, modelId: null, startAssetId: gate.input.scene.startImageJobId, approvedAt: new Date().toISOString() };
   await updateSceneQc(projectId, sceneId, (qc) => ({ ...qc, approval }));
   return { ok: true, message: "Version approved. You can generate the clip; any edit needs a new review and approval." };
+}
+
+/**
+ * The person checked the open critical issues and accepts them: marks every dismissible one OK and approves
+ * this exact version in one step. Hard issues (provider would reject, review missing or stale) still block.
+ */
+export async function acceptLabSceneIssues(projectId: string, sceneId: string): Promise<LabQcResult> {
+  const loaded = await loadLabProject(projectId);
+  if (!loaded?.project.story) return { ok: false, message: "Generate a story first" };
+  if (!loaded.project.approved) return { ok: false, message: "Approve the story first" };
+  const gate = labGateFor(loaded.project, loaded.jobs, sceneId);
+  if (!gate) return { ok: false, message: "Scene not found. Save the story first." };
+  const hard = gate.evaluation.critical.find((c) => c.hard);
+  if (hard) return { ok: false, message: `Can't be marked OK: ${hard.label}. ${hard.fix ?? hard.detail}` };
+  const ids = gate.evaluation.critical.map((c) => c.id);
+  const approval = { contentKey: gate.input.contentKey, modelId: null, startAssetId: gate.input.scene.startImageJobId, approvedAt: new Date().toISOString() };
+  await updateSceneQc(projectId, sceneId, (qc) => ({ ...qc, dismissed: [...new Set([...qc.dismissed, ...ids])], approval }));
+  return {
+    ok: true,
+    message: ids.length ? `Marked ${ids.length} critical issue${ids.length === 1 ? "" : "s"} OK and approved this version.` : "Version approved.",
+  };
 }
 
 export async function setLabCheckDismissed(projectId: string, sceneId: string, checkId: string, dismissed: boolean): Promise<LabQcResult> {
@@ -276,6 +320,14 @@ export async function runLabClipInspection(jobId: string): Promise<LabQcResult> 
     if (url) {
       images.push(url);
       referenceLabels.push(`image ${images.length}: start frame`);
+    }
+  }
+  const end = labSendsEndFrame(scene) ? loaded.jobs.find((j) => j.id === scene.endImageJobId) : undefined;
+  if (end?.filePath) {
+    const url = await imageDataUrl(end.filePath, end.contentType, true);
+    if (url) {
+      images.push(url);
+      referenceLabels.push(`image ${images.length}: end frame the clip was asked to finish on`);
     }
   }
   for (const ref of loaded.project.references.slice(0, 3)) {

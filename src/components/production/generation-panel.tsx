@@ -84,7 +84,7 @@ export function GenerationPanel({
   openManualJobs: { id: string; outputKind: AssetKind; label: string }[];
   /** Pre-generation QC context; evaluated here for the picked model and start image. */
   gate: KidsGateContext;
-  /** Claude is configured, so the AI frame review is required. */
+  /** OpenAI is configured, so the AI frame review is required. */
   aiConfigured: boolean;
 }) {
   const available = HIGGSFIELD_MODELS.filter((m) => (m.provider === "replicate" ? replicateConfigured : apiConfigured));

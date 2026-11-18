@@ -20,6 +20,7 @@ import {
   LAB_IMAGE_MODEL,
   LAB_TOPIC_MAX,
   LAB_VIDEO_MODELS,
+  labSendsEndFrame,
   type LabStory,
   labStoryOutputSchema,
   labStorySchema,
@@ -28,7 +29,7 @@ import {
 } from "@/lib/lab";
 import { estimateReplicateCost, REPLICATE_PROVIDER, replicateToRemoteStatus } from "@/lib/replicate";
 import { buildLabStoryPrompt } from "@/server/ai/lab-prompt";
-import { labVideoGateBlocker, runLabClipInspection, runLabSceneReview, setLabCheckDismissed, setLabSceneApproval } from "@/server/lab/qc";
+import { acceptLabSceneIssues, labVideoGateBlocker, runLabClipInspection, runLabSceneReview, setLabCheckDismissed, setLabSceneApproval } from "@/server/lab/qc";
 import { getOpenAIConfig, OPENAI_NOT_CONFIGURED_MESSAGE, runOpenAIStructuredGeneration } from "@/server/ai/openai";
 import { extractLastFrame, FfmpegError } from "@/server/media/ffmpeg";
 import { downloadMedia, MediaError, resolveMediaPath, saveMedia } from "@/server/media/storage";
@@ -370,6 +371,17 @@ export async function generateLabVideo(projectId: string, sceneId: string): Prom
       return { ok: false, message: "The chosen start image is gone. Pick another one or clear it." };
     }
   }
+  // Kling takes an end frame only together with a start frame.
+  let end: LabJob | undefined;
+  if (start && labSendsEndFrame(prepared.scene)) {
+    [end] = await db
+      .select()
+      .from(labJobs)
+      .where(and(eq(labJobs.id, prepared.scene.endImageJobId!), eq(labJobs.projectId, projectId)));
+    if (!end?.filePath || !end.contentType || end.kind !== "image") {
+      return { ok: false, message: "The chosen end image is gone. Pick another one or clear it." };
+    }
+  }
   const references = prepared.project.references;
   const mode: LabVideoMode = start ? "startImage" : references.length ? "references" : "text";
   const model = getHiggsfieldModel(LAB_VIDEO_MODELS[mode])!;
@@ -377,10 +389,18 @@ export async function generateLabVideo(projectId: string, sceneId: string): Prom
   if ("error" in provider) return { ok: false, message: provider.error };
 
   let imageUrl: string | undefined;
+  let endImageUrl: string | undefined;
   let referenceUrls: string[] | undefined;
   try {
     if (start) {
-      [imageUrl] = await uploadImages(provider, [{ filePath: start.filePath!, contentType: start.contentType!, role: "start image" }], true);
+      [imageUrl, endImageUrl] = await uploadImages(
+        provider,
+        [
+          { filePath: start.filePath!, contentType: start.contentType!, role: "start image" },
+          ...(end ? [{ filePath: end.filePath!, contentType: end.contentType!, role: "end image" }] : []),
+        ],
+        true,
+      );
     } else if (references.length) {
       referenceUrls = await uploadImages(
         provider,
@@ -398,6 +418,7 @@ export async function generateLabVideo(projectId: string, sceneId: string): Prom
     aspectRatio: prepared.project.aspectRatio as (typeof LAB_ASPECT_RATIOS)[number],
     durationSeconds: prepared.scene.durationSeconds,
     imageUrl,
+    endImageUrl,
     referenceUrls,
   });
   return submitJob(prepared, model, provider, prompt, body);
@@ -625,6 +646,19 @@ export async function approveLabScene(projectId: string, sceneId: string, approv
     return result;
   } catch (error) {
     console.error("approveLabScene failed", error);
+    return { ok: false, message: DB_ERROR };
+  }
+}
+
+/** Marks the scene's open critical issues OK (the dismissible ones) and approves this version. */
+export async function acceptLabIssues(projectId: string, sceneId: string): Promise<ActionResult> {
+  if (!idSchema.safeParse(projectId).success || !sceneIdSchema.safeParse(sceneId).success) return { ok: false, message: "Not found" };
+  try {
+    const result = await acceptLabSceneIssues(projectId, sceneId);
+    revalidate();
+    return result;
+  } catch (error) {
+    console.error("acceptLabIssues failed", error);
     return { ok: false, message: DB_ERROR };
   }
 }

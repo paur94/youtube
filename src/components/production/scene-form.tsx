@@ -93,10 +93,10 @@ export function SceneForm({
       </Field>
       <div className="grid gap-4 sm:grid-cols-2">
         <Field id={`${id}-setting`} label="Setting" error={errors?.setting}>
-          <Textarea id={`${id}-setting`} name="setting" rows={2} maxLength={4000} defaultValue={scene.setting} />
+          <Textarea id={`${id}-setting`} name="setting" rows={2} maxLength={8000} defaultValue={scene.setting} />
         </Field>
         <Field id={`${id}-action`} label="Action" error={errors?.action}>
-          <Textarea id={`${id}-action`} name="action" rows={2} maxLength={4000} defaultValue={scene.action} />
+          <Textarea id={`${id}-action`} name="action" rows={2} maxLength={8000} defaultValue={scene.action} />
         </Field>
       </div>
 
@@ -179,7 +179,7 @@ export function SceneForm({
           id={`${id}-prompt`}
           name="visualPrompt"
           rows={6}
-          maxLength={6000}
+          maxLength={8000}
           value={prompt}
           onChange={(e) => setPrompt(e.target.value)}
         />
@@ -203,10 +203,10 @@ export function SceneForm({
         hint="Sent only to models that support it (Wan 3.0 via Replicate)"
         error={errors?.negativePrompt}
       >
-        <Textarea id={`${id}-negative`} name="negativePrompt" rows={2} maxLength={4000} defaultValue={scene.negativePrompt} />
+        <Textarea id={`${id}-negative`} name="negativePrompt" rows={2} maxLength={8000} defaultValue={scene.negativePrompt} />
       </Field>
       <Field id={`${id}-notes`} label="Production notes" error={errors?.notes}>
-        <Textarea id={`${id}-notes`} name="notes" rows={2} maxLength={4000} defaultValue={scene.notes} />
+        <Textarea id={`${id}-notes`} name="notes" rows={2} maxLength={8000} defaultValue={scene.notes} />
       </Field>
       <OverlayFields
         id={id}

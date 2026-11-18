@@ -34,11 +34,12 @@ import {
   LAB_MAX_REFERENCES,
   LAB_MAX_SECONDS,
   LAB_MIN_SECONDS,
+  LAB_VIDEO_PROMPT_MAX,
   type LabScene,
   type LabStory,
   newSceneId,
 } from "@/lib/lab";
-import { buildLabGateInput, evaluateLabGate, labStoryChecks } from "@/lib/lab-qc";
+import { buildLabGateInput, evaluateLabGate, labFinalPrompt, labStoryChecks } from "@/lib/lab-qc";
 import { mediaUrl } from "@/lib/production";
 import { cn } from "@/lib/utils";
 import type { ActionResult } from "@/server/actions/ideas";
@@ -240,7 +241,28 @@ function NewProjectCard({ steps }: { steps: Steps }) {
   const router = useRouter();
   const [topic, setTopic] = useState("");
   const [aspectRatio, setAspectRatio] = useState<string>("9:16");
-  const [files, setFiles] = useState<File[]>([]);
+  const [picked, setPicked] = useState<{ key: string; file: File; src: string }[]>([]);
+  const fileRef = useRef<HTMLInputElement>(null);
+  const files = picked.map((p) => p.file);
+
+  function addFiles(list: File[]) {
+    setPicked((prev) => {
+      const key = (f: File) => `${f.name}:${f.size}:${f.lastModified}`;
+      const fresh = list
+        .filter((f) => !prev.some((p) => p.key === key(f)))
+        .slice(0, LAB_MAX_REFERENCES - prev.length)
+        .map((file) => ({ key: key(file), file, src: URL.createObjectURL(file) }));
+      return [...prev, ...fresh];
+    });
+  }
+
+  function removeFile(key: string) {
+    setPicked((prev) => {
+      const gone = prev.find((p) => p.key === key);
+      if (gone) URL.revokeObjectURL(gone.src);
+      return prev.filter((p) => p.key !== key);
+    });
+  }
 
   return (
     <Card>
@@ -268,18 +290,47 @@ function NewProjectCard({ steps }: { steps: Steps }) {
               ))}
             </select>
           </div>
-          <div className="grid gap-1.5">
-            <Label htmlFor="lab-files">Reference images (optional, up to {LAB_MAX_REFERENCES})</Label>
-            <Input
-              id="lab-files"
-              type="file"
-              accept="image/png,image/jpeg,image/webp"
-              multiple
-              onChange={(e) => setFiles(Array.from(e.target.files ?? []).slice(0, LAB_MAX_REFERENCES))}
-            />
+        </div>
+        <div className="grid gap-1.5">
+          <Label>Reference images (optional, up to {LAB_MAX_REFERENCES})</Label>
+          <div className="flex flex-wrap items-center gap-3">
+            {picked.map((p) => (
+              <div key={p.key} className="relative size-20 overflow-hidden rounded-lg border bg-muted">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={p.src} alt={p.file.name} title={p.file.name} className="size-full object-cover" />
+                <button
+                  type="button"
+                  aria-label={`Remove ${p.file.name}`}
+                  disabled={steps.pending}
+                  onClick={() => removeFile(p.key)}
+                  className="absolute top-1 right-1 rounded-full bg-background/90 p-0.5 shadow hover:text-destructive"
+                >
+                  <XIcon className="size-3.5" />
+                </button>
+              </div>
+            ))}
+            {picked.length < LAB_MAX_REFERENCES && (
+              <>
+                <input
+                  ref={fileRef}
+                  type="file"
+                  accept="image/png,image/jpeg,image/webp"
+                  multiple
+                  hidden
+                  onChange={(e) => {
+                    const list = Array.from(e.target.files ?? []);
+                    e.target.value = "";
+                    if (list.length) addFiles(list);
+                  }}
+                />
+                <Button variant="outline" className="size-20 flex-col" disabled={steps.pending} onClick={() => fileRef.current?.click()}>
+                  <UploadIcon />
+                  <span className="text-xs">Add</span>
+                </Button>
+              </>
+            )}
           </div>
         </div>
-        {files.length > 0 && <Thumbs items={files.map((f) => ({ key: f.name + f.size, src: URL.createObjectURL(f), name: f.name }))} />}
         <div>
           <Button
             disabled={steps.pending || topic.trim().length < 3}
@@ -387,19 +438,6 @@ function SetupCard({ project, steps }: { project: LabProject; steps: Steps }) {
   );
 }
 
-function Thumbs({ items }: { items: { key: string; src: string; name: string }[] }) {
-  return (
-    <div className="flex flex-wrap gap-2">
-      {items.map((i) => (
-        <div key={i.key} className="size-16 overflow-hidden rounded-lg border bg-muted">
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={i.src} alt={i.name} className="size-full object-cover" />
-        </div>
-      ))}
-    </div>
-  );
-}
-
 function StoryEditor({
   project,
   story: saved,
@@ -428,7 +466,7 @@ function StoryEditor({
     });
 
   const totalSeconds = story.scenes.reduce((sum, s) => sum + s.durationSeconds, 0);
-  const storyWarnings = labStoryChecks(project.topic, story).filter((c) => c.status !== "passed");
+  const storyWarnings = labStoryChecks(project.topic, story, project.qc).filter((c) => c.status !== "passed");
 
   return (
     <div className="grid gap-4">
@@ -657,8 +695,16 @@ function SceneCard({
             <Textarea id={`${field}-image`} rows={4} value={scene.imagePrompt} onChange={(e) => onChange({ imagePrompt: e.target.value })} />
           </div>
           <div className="grid gap-1.5">
-            <Label htmlFor={`${field}-video`}>Motion prompt (Kling 4.0)</Label>
-            <Textarea id={`${field}-video`} rows={3} value={scene.videoPrompt} onChange={(e) => onChange({ videoPrompt: e.target.value })} />
+            <Label htmlFor={`${field}-video`}>
+              Motion prompt (Kling 4.0): Setup, Moves, Stays still, timed beats, Camera, Ends on, Sound
+            </Label>
+            <Textarea
+              id={`${field}-video`}
+              rows={10}
+              maxLength={LAB_VIDEO_PROMPT_MAX}
+              value={scene.videoPrompt}
+              onChange={(e) => onChange({ videoPrompt: e.target.value })}
+            />
           </div>
           <div className="grid gap-1.5">
             <Label htmlFor={`${field}-dialogue`}>Dialogue (one line each, “Name: line”; no narrator)</Label>
@@ -686,7 +732,9 @@ function SceneCard({
           <p className="text-xs text-muted-foreground">
             Generates at {project.aspectRatio}.{" "}
             {scene.startImageJobId
-              ? "The clip starts from the image marked as start frame."
+              ? scene.endImageJobId
+                ? "The clip starts from the start frame and must finish on the end frame."
+                : "The clip starts from the image marked as start frame. Mark a second image as end frame to pin where the action lands."
               : project.references.length
                 ? "No start frame picked: the clip uses your reference images. Pick an image below to start from it."
                 : "No start frame picked: the clip is generated from the prompt alone."}
@@ -703,6 +751,8 @@ function SceneCard({
               steps={steps}
               save={save}
               onApplyPrompt={(videoPrompt) => onChange({ videoPrompt })}
+              finalPrompt={labFinalPrompt(story, scene, project.references.length)}
+              onApplyImagePrompt={(imagePrompt) => onChange({ imagePrompt })}
             />
           )}
 
@@ -710,16 +760,28 @@ function SceneCard({
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               {images.map((job) => {
                 const isStart = scene.startImageJobId === job.id;
+                const isEnd = scene.endImageJobId === job.id;
                 return (
-                  <JobTile key={job.id} job={job} steps={steps} highlight={isStart} aspectRatio={project.aspectRatio}>
+                  <JobTile key={job.id} job={job} steps={steps} highlight={isStart || isEnd} aspectRatio={project.aspectRatio}>
                     {job.filePath && (
                       <Button
                         size="xs"
                         variant={isStart ? "default" : "secondary"}
                         disabled={steps.pending}
-                        onClick={() => saveWith({ startImageJobId: isStart ? null : job.id })}
+                        onClick={() => saveWith({ startImageJobId: isStart ? null : job.id, ...(isEnd ? { endImageJobId: null } : {}) })}
                       >
                         {isStart ? "Start frame ✓" : "Use as start"}
+                      </Button>
+                    )}
+                    {job.filePath && !isStart && (scene.startImageJobId || isEnd) && (
+                      <Button
+                        size="xs"
+                        variant={isEnd ? "default" : "secondary"}
+                        disabled={steps.pending}
+                        title="The clip must finish on this image (Kling end frame)"
+                        onClick={() => saveWith({ endImageJobId: isEnd ? null : job.id })}
+                      >
+                        {isEnd ? "End frame ✓" : "Use as end"}
                       </Button>
                     )}
                   </JobTile>

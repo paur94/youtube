@@ -4,6 +4,7 @@ import {
   countWords,
   evaluateGate,
   GATE_GROUPS,
+  gateReviewOutputSchema,
   type GateCheck,
   gateCheck,
   type GateGroup,
@@ -15,8 +16,12 @@ import {
   timelineChecks,
 } from "./generation-qc";
 import { KLING_MAX_IMAGES } from "./kling";
-import type { LabReference, LabScene, LabStory, LabVideoMode } from "./lab";
+import { buildLabVideoPrompt, klingPromptLimit, type LabReference, type LabScene, type LabStory, type LabVideoMode } from "./lab";
+import { parseTimeline } from "./production";
 import { hashText } from "./story-qc";
+
+/** The lab's review also returns a corrected image prompt when the start frame can't begin the action. */
+export const labGateReviewOutputSchema = gateReviewOutputSchema.extend({ suggestedImagePrompt: z.string() });
 
 // Pre-generation QC for the Adult Lab; the shared machinery and its stages are described in ./generation-qc.
 // The lab's AI review and clip inspection run on OpenAI, like the rest of the lab.
@@ -46,9 +51,26 @@ export function labContentKey(story: LabStory, scene: LabScene, references: Pick
       story.characters.map((c) => [c.name.trim(), c.look.trim()]),
       references.map((r) => r.id),
       aspectRatio,
+      // Appended only when set, so scenes without an end frame keep the key their approval was given for.
+      ...(scene.endImageJobId ? [scene.endImageJobId] : []),
     ]),
   );
 }
+
+/** The exact prompt generateLabVideo sends for this scene (same on the client, for the preview). */
+export function labFinalPrompt(story: LabStory, scene: LabScene, referenceCount: number) {
+  const mode = labVideoMode(scene, referenceCount);
+  return buildLabVideoPrompt(story, scene, mode, mode === "references" ? Math.min(referenceCount, KLING_MAX_IMAGES) : 0);
+}
+
+const SPEC_PARTS = [
+  { label: "Setup", re: /^\s*setup\s*:/im, why: "where everyone and everything is in the first frame" },
+  { label: "Stays still", re: /^\s*stays? still\s*:/im, why: "who and what must not move, and the posture they hold" },
+  { label: "Ends on", re: /^\s*ends? on\s*:/im, why: "where everyone and everything is in the last frame" },
+] as const;
+const PRONOUN_RE = /\b(he|she|they|him|them)\b/gi;
+/** Upper end of the shot spec guide's 600-2,500 characters, with some slack. */
+const LONG_MOTION_PROMPT = 3_000;
 
 export type LabStartFrame = {
   exists: boolean;
@@ -57,6 +79,7 @@ export type LabStartFrame = {
   prompt: string;
   fromLastFrame: boolean;
 };
+export type LabEndFrame = Pick<LabStartFrame, "exists" | "contentType">;
 
 export type LabClipState = { revision: number; inspection: "none" | "stale" | "pass" | "warn" | "fail" };
 
@@ -66,6 +89,8 @@ export type LabGateInput = {
   index: number;
   referenceCount: number;
   start: LabStartFrame | null;
+  /** The image picked as the clip's last frame, or null. */
+  end?: LabEndFrame | null;
   /** The previous scene has a finished clip whose last frame could start this one. */
   previousSceneHasClip: boolean;
   previousClip: LabClipState | null;
@@ -108,6 +133,13 @@ export function labGateRules(input: LabGateInput): GateCheck[] {
       fix: "Pick a JPEG or PNG start frame.",
       hard: true,
     });
+  } else if (input.end && input.start && !input.end.exists) {
+    add("request", "critical", "End frame is gone", "The image picked as end frame was deleted or never finished.", { fix: "Pick another end frame or clear it.", hard: true });
+  } else if (input.end && input.start && !["image/jpeg", "image/png"].includes(input.end.contentType ?? "")) {
+    add("request", "critical", "End frame format", `Kling only accepts JPEG or PNG; the end frame is ${input.end.contentType ?? "of unknown type"}.`, {
+      fix: "Pick a JPEG or PNG end frame.",
+      hard: true,
+    });
   } else if (mode === "references" && input.referenceCount > KLING_MAX_IMAGES) {
     add("request", "warning", "Too many reference images", `Kling takes ${KLING_MAX_IMAGES} images; ${input.referenceCount - KLING_MAX_IMAGES} will be dropped.`, {
       fix: "Remove the references this scene doesn't need.",
@@ -119,6 +151,19 @@ export function labGateRules(input: LabGateInput): GateCheck[] {
       "Request is complete",
       mode === "startImage" ? "Kling 4.0 animates the chosen start frame." : mode === "references" ? `Kling 4.0 with ${input.referenceCount} reference image${input.referenceCount === 1 ? "" : "s"}.` : "Kling 4.0 from text only.",
     );
+  }
+  const finalPrompt = labFinalPrompt(story, scene, input.referenceCount);
+  const limit = klingPromptLimit(finalPrompt);
+  if (finalPrompt.length > limit) {
+    add("request", "critical", "Prompt is longer than Kling accepts", `The final prompt is ${finalPrompt.length.toLocaleString("en-US")} characters; Kling 4.0 takes ${limit.toLocaleString("en-US")}${limit < 26_000 ? " for non-English text" : ""}.`, {
+      fix: "Shorten the motion prompt, the dialogue or the character looks.",
+      hard: true,
+    });
+  }
+  if (motion.length > LONG_MOTION_PROMPT) {
+    add("request", "warning", "Motion prompt is long", `${motion.length.toLocaleString("en-US")} characters. Past about ${LONG_MOTION_PROMPT.toLocaleString("en-US")} the model starts dropping instructions, and each review finds new details to question.`, {
+      fix: "Cut repetition and re-description of what the start frame already shows; keep one sentence per instruction.",
+    });
   }
   const risky = moderationRisks(`${scene.videoPrompt}\n${scene.dialogue}`);
   if (risky.length) {
@@ -140,10 +185,47 @@ export function labGateRules(input: LabGateInput): GateCheck[] {
       fix: "Generate the scene image and use it as start frame, or add reference images.",
     });
   }
+  if (input.end && !input.start) {
+    add("frames", "warning", "End frame without a start frame", "Kling only takes an end frame together with a start frame, so the picked end frame won't be sent.", {
+      fix: "Pick a start frame too, or clear the end frame.",
+    });
+  } else if (input.end?.exists) {
+    add("frames", "passed", "End frame", "The clip is pinned to end on the chosen end frame.");
+  } else if (input.start?.exists && scene.durationSeconds > 10) {
+    add("frames", "warning", "Long clip with only a start frame", `Nothing pins where a ${scene.durationSeconds}s clip ends; positions and objects drift the longer a clip runs.`, {
+      fix: "Generate an image of the final state and mark it as end frame, or split the action into shorter scenes.",
+    });
+  }
   if (!input.start && input.previousSceneHasClip) {
     add("continuity", "warning", "Cut from the previous scene", "The previous scene has a finished clip, but this one doesn't start from its last frame, so positions, lighting and outfits may jump.", {
       fix: 'Use "Last frame → next" on the previous clip, unless a hard cut is intended.',
     });
+  }
+
+  // Roles and positions: what the model isn't told to keep still, it animates.
+  if (motion) {
+    const inShot = castNames.filter((n) => new RegExp(`\\b${n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i").test(motion));
+    const missing = SPEC_PARTS.filter((p) => !p.re.test(motion));
+    if (missing.length) {
+      add(
+        "actions",
+        "warning",
+        "Motion prompt leaves positions and roles open",
+        `No ${missing.map((p) => `"${p.label}:"`).join(", ")} line${missing.length === 1 ? "" : "s"} (${missing.map((p) => p.why).join("; ")}). Kling improvises whatever isn't stated${inShot.length > 1 ? `, and with ${inShot.length} characters in the shot that is usually a character moving who shouldn't` : ""}.`,
+        { fix: 'Run the AI review and use its suggested prompt, or add the missing lines yourself.' },
+      );
+    } else {
+      add("actions", "passed", "Positions and roles are stated", "The motion prompt says where everything starts, what stays still and where it ends.");
+    }
+    if (inShot.length > 1) {
+      const body = parseTimeline(motion.replace(/(\d)\s*(?:seconds?|secs?)\b/gi, "$1s"));
+      const pronouns = [...new Set((body.segments.map((s) => s.text).join("\n") || motion).match(PRONOUN_RE)?.map((p) => p.toLowerCase()) ?? [])];
+      if (pronouns.length) {
+        add("actions", "warning", "Pronouns with several characters", `The action uses ${pronouns.map((p) => `"${p}"`).join(", ")} with ${inShot.join(" and ")} in the shot, so the model has to guess who acts.`, {
+          fix: "Use the character's name every time.",
+        });
+      }
+    }
   }
 
   // Dialogue against the cast and the no-narrator rule.
@@ -239,8 +321,22 @@ export function evaluateLabGate(input: LabGateInput) {
 }
 
 /** Story-level checks shown on the story card (they don't block a single scene). */
-export function labStoryChecks(topic: string, story: LabStory): GateCheck[] {
+export function labStoryChecks(topic: string, story: LabStory, qc?: Partial<LabQcState> | null): GateCheck[] {
   const out: GateCheck[] = [];
+  // A scene whose last review found more action than its length belongs to the story's structure, not its prompt.
+  for (const [i, scene] of story.scenes.entries()) {
+    const fit = readLabSceneQc(qc, scene.id).review?.fit;
+    if (!fit || fit.fits) continue;
+    const needed = Math.max(scene.durationSeconds + 1, Math.ceil(fit.secondsNeeded));
+    out.push(
+      gateCheck("rules", "timeline", "warning", `Scene ${i + 1} has more action than ${scene.durationSeconds}s`, `Its last review estimated about ${needed}s. ${fit.detail}`.trim(), {
+        fix:
+          needed <= 30
+            ? `Raise it to ${needed}s, split it into ${Math.ceil(needed / scene.durationSeconds)} scenes, or cut events from the brief.`
+            : `Split it into ${Math.ceil(needed / Math.min(scene.durationSeconds, 30))} scenes, or cut events from the brief.`,
+      }),
+    );
+  }
   const total = story.scenes.reduce((sum, s) => sum + s.durationSeconds, 0);
   const wanted = /\b(?:duration|length|long|runtime)\b[^0-9\n]{0,20}(\d{1,3})\s*(?:s\b|sec|seconds)/i.exec(topic) ?? /\b(\d{1,3})[- ]?(?:s|sec|second)s?\b(?:[- ](?:video|clip|film|short))/i.exec(topic);
   if (wanted) {
@@ -344,6 +440,10 @@ export function buildLabGateInput(input: {
         fromLastFrame: startJob?.model === "last-frame",
       }
     : null;
+  const endJob = scene.endImageJobId ? input.jobs.find((j) => j.id === scene.endImageJobId) : undefined;
+  const end: LabEndFrame | null = scene.endImageJobId
+    ? { exists: Boolean(endJob && endJob.kind === "image" && endJob.filePath), contentType: endJob?.contentType ?? null }
+    : null;
   const previous = index > 0 ? input.story.scenes[index - 1] : null;
   const latest = labSceneClips(input.jobs, scene.id).at(-1);
   return {
@@ -352,6 +452,7 @@ export function buildLabGateInput(input: {
     index,
     referenceCount: input.references.length,
     start,
+    end,
     previousSceneHasClip: previous ? labSceneClips(input.jobs, previous.id).length > 0 : false,
     previousClip: latest ? { revision: latest.revision, inspection: labClipStatus(readLabClipReport(latest.job.qc), contentKey) } : null,
     aiConfigured: input.aiConfigured,

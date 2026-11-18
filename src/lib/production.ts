@@ -892,8 +892,8 @@ const text = (max: number) => z.string().trim().max(max).default("");
 export const sceneInputSchema = z
   .object({
     title: z.string().trim().min(1, "Give the scene a title").max(160),
-    setting: text(4000),
-    action: text(4000),
+    setting: text(8000),
+    action: text(8000),
     narration: text(8000),
     dialogue: text(8000).transform(parseDialogue),
     durationSeconds: z.coerce
@@ -901,9 +901,9 @@ export const sceneInputSchema = z
       .int("Use whole seconds")
       .min(1, "At least 1 second")
       .max(600, "At most 10 minutes"),
-    visualPrompt: text(6000),
-    negativePrompt: text(4000),
-    notes: text(4000),
+    visualPrompt: text(8000),
+    negativePrompt: text(8000),
+    notes: text(8000),
     overlays: z.array(sceneOverlaySchema, "Invalid overlays").max(MAX_OVERLAYS * 2).default([]),
     characterIds: z.array(z.uuid()).max(30).default([]),
     /** `characterId:lookId` for linked characters that use a look other than their default one. */

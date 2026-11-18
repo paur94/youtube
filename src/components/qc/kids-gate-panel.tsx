@@ -12,7 +12,7 @@ import { applySceneCorrections, approveSceneGeneration, dismissQcIssue, reviewSc
 import { GateCounts, GateReport } from "./gate-report";
 
 /**
- * Pre-generation QC for a Kids Studio clip: rule checks, the Claude frame review, corrections and the
+ * Pre-generation QC for a Kids Studio clip: rule checks, the OpenAI frame review, corrections and the
  * approval that unlocks "Generate". Everything is for the model and start image picked above.
  */
 export function KidsGatePanel({
@@ -57,7 +57,7 @@ export function KidsGatePanel({
       <p className="text-xs text-muted-foreground">
         Nothing is generated until this exact version (prompt, frames, references, model and length) has no open critical issues and
         you approve it. Any edit needs a new review.
-        {aiConfigured ? " The AI review is one Claude call that looks at the start, middle and end frames and the references." : ""}
+        {aiConfigured ? " The AI review is one OpenAI call that looks at the start, middle and end frames and the references." : ""}
       </p>
 
       <div className="flex flex-wrap gap-2">

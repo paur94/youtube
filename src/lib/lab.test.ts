@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { buildLabImagePrompt, buildLabVideoPrompt, clampSeconds, type LabStory, labStorySchema, storyFromOutput } from "./lab";
+import { buildLabImagePrompt, buildLabVideoPrompt, clampSeconds, klingPromptLimit, type LabStory, labStorySchema, storyFromOutput } from "./lab";
 
 const story: LabStory = {
   title: "Night Shift",
@@ -50,12 +50,37 @@ describe("lab story", () => {
     expect(prompt).toContain("@image_1 is the first frame");
     expect(prompt).toContain("Mara: Who's there?");
     expect(prompt).toContain("No narrator and no voice-over");
-    expect(prompt).not.toContain("Characters:");
+    // The cast still goes along so Kling can tell which figure in the frame is which.
+    expect(prompt).toContain("Cast, to tell the figures in @image_1 apart");
+    expect(prompt).toContain("Mara: 40s, short grey hair");
+  });
+
+  it("names the end frame only when a start frame goes with it", () => {
+    const scene = { ...story.scenes[0], startImageJobId: "img1", endImageJobId: "img2" };
+    expect(buildLabVideoPrompt(story, scene, "startImage", 0)).toContain("@image_2 is the last frame");
+    expect(buildLabVideoPrompt(story, { ...scene, startImageJobId: null }, "text", 0)).not.toContain("@image_2");
+  });
+
+  it("applies Kling's lower prompt limit to non-English prompts", () => {
+    expect(klingPromptLimit("Mara stops and turns.")).toBe(26_000);
+    expect(klingPromptLimit("Мара останавливается и оборачивается.")).toBe(11_000);
   });
 
   it("tags Kling reference images in order", () => {
     const prompt = buildLabVideoPrompt({ ...story, scenes: [{ ...story.scenes[0], dialogue: "" }] }, story.scenes[0], "references", 3);
     expect(prompt).toContain("@image_1, @image_2 and @image_3 are references");
     expect(prompt).toContain("Characters:\nMara");
+  });
+
+  it("doesn't contradict the motion prompt's own image roles or sound plan", () => {
+    const plain = buildLabVideoPrompt(story, { ...story.scenes[0], dialogue: "" }, "references", 2);
+    expect(plain).toContain("@image_1 and @image_2 are references for the characters and the style");
+    expect(plain).toContain("ambient sound only");
+
+    const scene = { ...story.scenes[0], dialogue: "", videoPrompt: "@image_1 is Mara's look only.\nSound: soft piano music, footsteps." };
+    const own = buildLabVideoPrompt({ ...story, scenes: [scene] }, scene, "references", 2);
+    expect(own).not.toContain("are references for");
+    expect(own).not.toContain("ambient sound only");
+    expect(own).toContain("No dialogue, no narrator and no voice-over.");
   });
 });

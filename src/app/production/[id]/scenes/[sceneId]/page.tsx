@@ -26,6 +26,7 @@ import { readOverlays } from "@/lib/overlays";
 import { buildGenerationPrompt, buildVideoPrompt, findPromptConcerns, POLLABLE_JOB_STATUSES, resolveLook } from "@/lib/production";
 import { formatDialogue } from "@/lib/stories";
 import { getClaudeConfig } from "@/server/ai/claude";
+import { getOpenAIConfig } from "@/server/ai/openai";
 import { loadClipMusic } from "@/server/production/service";
 import { getHedraConfig } from "@/server/providers/hedra";
 import { getHiggsfieldConfig } from "@/server/providers/higgsfield";
@@ -257,7 +258,7 @@ async function SceneData({ params }: Pick<Props, "params">) {
                 startImages={startImages}
                 openManualJobs={openManualJobs}
                 gate={gate.ctx}
-                aiConfigured={claude.configured}
+                aiConfigured={getOpenAIConfig().configured}
               />
             </CardContent>
           </Card>

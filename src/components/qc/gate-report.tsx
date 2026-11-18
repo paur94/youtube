@@ -79,7 +79,11 @@ function CheckItem({ check, dismissed, onDismiss, pending }: { check: GateCheck;
         {check.detail && <p className="text-xs text-muted-foreground">{check.detail}</p>}
         {check.fix && check.status !== "passed" && <p className="text-xs">Fix: {check.fix}</p>}
       </div>
-      {canDismiss && (
+      {canDismiss && check.status === "critical" && !dismissed ? (
+        <Button size="xs" variant="outline" disabled={pending} title="I checked it and it's fine" onClick={() => onDismiss(check.id, true)}>
+          <CircleCheckIcon /> Mark OK
+        </Button>
+      ) : canDismiss && (
         <Button
           size="icon-sm"
           variant="ghost"
